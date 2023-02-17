@@ -9,13 +9,7 @@ class Solver():
                  xlabels=None,
                  ):
         
-        # Initialize parameters
-        # self.x0 = isv.initialize_state_vector(*init_cond)
-        # self.lp = lp
-        # self.isv = isv
-        # lp.Load_parameters()            # Load machine parameters
         self.N = A.shape[0]
-        # print(A.shape[0])
         self.A = A
         self.B = B
 
