@@ -1,4 +1,4 @@
-<Output device="EMTDC" version="2010" date="2023/02/16" time="16:01:39.000000">
+<Output device="EMTDC" version="2010" date="2023/02/17" time="09:37:42.000000">
   <Domain name="Time" unit="s" mult="0.0" skew="0.0">
     <Sample rate="100000.0" end="15000" />
   </Domain>
