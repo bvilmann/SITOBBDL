@@ -91,8 +91,14 @@ class Solver:
 
         return x_hat, y_hat
 
-    def run_dynamic_simulation(self,t,u, x0=None,method = 'RK45'):
+    def run_dynamic_simulation(self,u, x0=None,method = 'RK45',force_run:bool=False):
 
+        # Input validation
+        lamb = np.linalg.eig(self.A)[0]
+        if np.any(np.real(lamb) > 0) and force_run:
+            raise ValueError('System matrix A is unstable. To run dynamic simulation, provide the argument: "force_run=True"')
+
+        # Initializing
         if x0 is None:
             x0 = np.zeros(self.n)
 
