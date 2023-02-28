@@ -2,113 +2,174 @@ import numpy as np
 from scipy.integrate import solve_ivp
 import control as ctrl
 import matplotlib.pyplot as plt
+import numpy as np
+from scipy.stats import norm
+from scipy.optimize import minimize
+import SITOBBDS_utils as utils
+from numerical_methods import NumericalMethods
+import datetime
+import scipy
 
 class Solver:
+    def __init__(self):
+        self.method = NumericalMethods()
+        return
+    
+    def load_model(self,model,
+                   discretize:bool=False,
+                   dt:float=None,
+                   params:dict=None):
+        """
+        :param model:
+        :param discretize:
+        :param dt:
+        :param params:
+        :return:
+        """
+        # ------ Load parameters------
+        R = 1
+        L = 1e-3
+        C1 = 0.5e-6
+        C2 = 0.5e-6
+        Rin = 0.05 # BRK = 0.05
+        # Source
+        self.V = 66e3
+        self.f = 50
+        self.omega = 2*np.pi*self.f
+        self.phi = 0
+        # 
+        if params is not None:
+            for k, v in params.items():
+                setattr(self,k,v)
 
-    def __init__(self,
-                 A,
-                 B,
-                 C=None,
-                 D=None,
-                 t0 = 0,
-                 t_end = 0.5,
-                 dt = 1e-5,
-                 solver = 'dopri5', # dopri5 -> Runge-Kutta, 'RK45'
-                 ):
-        # Creating time series
-        self.t0 = t0
-        self.t_end = t_end
+        
+        # ------ Load model ------
+        if isinstance(model, (list,tuple)):
+            # ------ CUSTOM MODEL ------ 
+            model='Custom'
+            self.n = n = 1
+            raise NotImplementedError('')
+            
+        elif isinstance(model,str) and model == 'c1_s0_o3':
+            # ------ Single core, no screen, 3rd order ------ 
+            self.n = n = 3
+            A = np.array([[-R/L, 1/L, -1/L],
+                            [-1/(C1), -1/(Rin * C1), 0],
+                            [1/(C2), 0, 0],
+                          ])
+            
+            B = np.array([[0], [1 / (Rin * C1)], [0]])
+        elif isinstance(model,str) and model == 'c1_s0_o2':
+            # ------ Single core, no screen, 2rd order ------ 
+            self.n = n = 2
+            A = np.array([[-R/L,-1/(L)],
+                          [1/(C2),0]])
+
+            B = np.array([[1/L],[0]])
+           
+        # Generalized output matrices
+        C = np.eye(n)
+        D = np.zeros(1)
+
+
+        # Discretize if needed
+        if discretize:
+            if dt is None:
+                raise ValueError('dt must be defined to discretize the system')
+            else:
+
+                # A, B, C, D, dt = scipy.signal.cont2discrete((A, B, C, D),dt)
+                self.method.c2d(A,B,C,D,dt)
+        # Store state and relevant data
+        self.A, self.B, self.C, self.D = A, B, C, D
+        self.discretize = discretize
         self.dt = dt
-        self.t = np.arange(t0, t_end + dt, dt)
+        self.condition_number = np.linalg.cond(A)
+        self.lambd = np.linalg.eigvals(A)
+        self.A_unstable = np.real(self.lambd).any() > (0,1)[discretize]
 
-        # ODE solver
-        self.solver = solver
-
-        # Defining formats/shapes
-        self.n = n = A.shape[0] # num_states
-
-        # Defining matrices
-        self.A = A
-        self.B = B
-        if C is None:
-            self.C = np.ones(n)
-        else:
-            self.C = C
-        if D is None:
-            self.D = 0
-        else:
-            self.D = D
-
-        # Defining formats/shapes
-        # self.n = n = A.shape[0] # num_measurements
-        self.m = m = self.C.shape[0] # num_outputs
-
+        # print
+        print('',f'Model: {model}','A=',A,'B=',B,'C=',C,'D=',D,'Lambdas=',*list(self.lambd),'',f'Condition number:\t{self.condition_number}',f'A matrix unstable:\t{self.A_unstable}',sep='\n') 
+                        
+        # The condition number of x is defined as the norm of x times the norm of the inverse of x [1]; the norm can be the usual L2-norm (root-of-sum-of-squares) or one of a number of other matrix norms.
+        
         return
 
-    def kalman_filter(self,y, u, x0, P0, Q, R):
+    def solve(self,t_start,t_end,u=None,dt=None,x0=None,method='RK45'):
         """
-        Implements the Kalman filter for state estimation given state space matrices and measurements.
 
-        Args:
-            A (ndarray): State transition matrix
-            B (ndarray): Input matrix
-            C (ndarray): Output matrix
-            D (ndarray): Feedthrough matrix
-            y (ndarray): Array of measured outputs, with shape (num_measurements, num_outputs)
-            u (ndarray): Array of inputs, with shape (num_measurements, num_inputs)
-            x0 (ndarray): Initial state estimate, with shape (num_states, 1)
-            P0 (ndarray): Initial state covariance matrix, with shape (num_states, num_states)
-            Q (ndarray): Process noise covariance matrix, with shape (num_states, num_states)
-            R (ndarray): Measurement noise covariance matrix, with shape (num_outputs, num_outputs)
-
-        Returns:
-            x_hat (ndarray): Array of estimated states, with shape (num_measurements, num_states)
-            y_hat (ndarray): Array of estimated outputs, with shape (num_measurements, num_outputs)
+        :param t_start:
+        :param t_end:
+        :param u:
+        :param dt:
+        :param x0:
+        :param method:
+        :return:
         """
-        # Initialize arrays
-        num_measurements = y.shape[0]
-        num_states = self.A.shape[0]
-        num_outputs = self.C.shape[0]
-        x_hat = np.zeros((num_measurements, num_states))
-        y_hat = np.zeros((num_measurements, num_outputs))
-
-        # Initialize state estimates and covariance
-        x_hat[0] = x0.reshape(-1)
-        P = P0
-
-        for k in range(num_measurements):
-            # Prediction step
-            x_hat_priori = self.A @ x_hat[k] + self.B @ u[k]
-            P_priori = self.A @ P @ self.A.T + Q
-
-            # Update step
-            K = P_priori @ self.C.T @ np.linalg.inv(self.C @ P_priori @ self.C.T + R)
-            x_hat[k + 1] = x_hat_priori + K @ (y[k] - self.C @ x_hat_priori - self.D @ u[k])
-            P = (np.eye(num_states) - K @ self.C) @ P_priori
-
-            # Compute estimated output
-            y_hat[k] = self.C @ x_hat[k + 1] + self.D @ u[k]
-
-        return x_hat, y_hat
-
-    def run_dynamic_simulation(self,u, x0=None,method = 'RK45',force_run:bool=False):
-
-        # Input validation
-        lamb = np.linalg.eig(self.A)[0]
-        if np.any(np.real(lamb) > 0) and force_run:
-            raise ValueError('System matrix A is unstable. To run dynamic simulation, provide the argument: "force_run=True"')
-
-        # Initializing
+        # ========== Input validation ==========
+        if self.dt is None and dt is None:
+            raise ValueError('Please provide dt if the system is not discretized')
+        elif self.dt is not None and dt is not None and self.dt != dt:
+            raise Warning(f'System is discretized for {self.dt} but you are trying to solve for {dt}')
+        elif self.dt is not None:
+            dt = self.dt
+        elif dt is not None:
+            self.dt = dt
+            
+        # ========== Initializing ==========
+        # Creating initial conditions
         if x0 is None:
             x0 = np.zeros(self.n)
+        self.x0 = x0
 
-        ss = ctrl.ss(self.A, self.B, self.C, self.D)
+        # Creating input function
+        if u is None:
+            u = lambda t: self.V*np.sin(self.omega*t+self.phi)*(0,1)[t>=0.1]
+    
+        # Creating time series
+        time = np.arange(t_start,t_end+dt,dt)
+        time = np.round(time,7)        
 
-        def f(t, x):
-            u_ = np.array([u(t)])
+        # ========== DISCRETE-TIME SOLUTION ==========
+        if self.discretize:            
+            f = lambda t,x,u,dt: self.A @ x + self.B @ np.array([u(t)])
 
-            return self.A @ x + self.B @ u_
+            # initialize state matrix
+            x = np.empty((self.n,len(time)))
 
-        sol = solve_ivp(f, [self.t[0], self.t[-1]], x0, t_eval=self.t, method=method)  #
+            print('',f'Solving discrete-time system:',sep='\n')
+            t1 = datetime.datetime.now()
 
-        return sol, ss
+            x[:,0] = x0
+            for k,t in enumerate(time[:-1]):
+                # dx = x + dt * f(t,x,u)
+                x[:,k+1] = self.method.euler_step(x[:,k], u, f, t, dt)
+
+            t2 = datetime.datetime.now()            
+            print(f'Finished in: {(t2-t1).total_seconds()}')
+
+            res = utils.results_wrapper({'t':time,
+                                         'x':x,
+                                         'y':self.C @ x, #  + self.D @ u(time)
+                                         })
+            
+        # ========== CONTINUOUS-TIME SOLUTION ==========
+        else:
+            # creating solution matrix
+            f = lambda t, x: self.A @ x + self.B @ np.array([u(t)])
+
+            print(f'Solving continuous-time system:')
+            t1 = datetime.datetime.now()
+            res = solve_ivp(f, [time[0], time[-1]], x0, t_eval=time, method=method)  #
+            t2 = datetime.datetime.now()
+            print(f'Finished in: {(t2-t1).total_seconds()}')
+
+        return res
+
+
+
+
+
+
+
+
