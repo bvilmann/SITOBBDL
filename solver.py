@@ -10,6 +10,7 @@ from numerical_methods import NumericalMethods
 import datetime
 import scipy
 
+#
 class Solver:
     def __init__(self):
         self.method = NumericalMethods()
