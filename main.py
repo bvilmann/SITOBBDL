@@ -12,10 +12,10 @@ import os
 #%%
 sol = Solver()
 
-sol.load_model('c1_s0_o3',discretize=True,dt=10e-6)
+sol.load_model('c1_s0_o3',discretize=False,dt=10e-6,domain='z')
 # sol.load_model('c1_s0_o3',dt=10e-6)
 
-res = sol.solve(0.095,0.13)
+res = sol.solve(0.095,1.3)
 
 #%%
 fig, ax = plt.subplots(3,1,dpi=300,sharex=True)
@@ -23,7 +23,7 @@ fig, ax = plt.subplots(3,1,dpi=300,sharex=True)
 for i in range(3):
     ax[i].plot(res.t,res.y[i])
     
-ax[-1].set_xlim(0.095,0.13)
+# ax[-1].set_xlim(0.095,0.13)
    
 
 #%%asdf

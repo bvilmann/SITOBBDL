@@ -36,22 +36,25 @@ class NumericalMethods:
         Ad = eAt[:A.shape[0], :A.shape[1]]
         Bd = eAt[:A.shape[0], -1:]
 
-        # # Calculate the discrete-time output matrix using the zero-order hold method
-        # Cz = np.zeros((C.shape[0], Bd.shape[1]))
-        # for i in range(Bd.shape[1]):
-        #     Cz[:, i] = C @ np.linalg.matrix_power(Ad, i) @ Bd
-        #
-        # # Calculate the discrete-time feedforward matrix using the zero-order hold method
+        # Calculate the discrete-time output matrix using the zero-order hold method
+        Cz = np.zeros((C.shape[0], Bd.shape[1]))
+        for i in range(Bd.shape[1]):
+            Cz[:, i] = C @ np.linalg.matrix_power(Ad, i) @ Bd.reshape(Bd.shape[0])
+
+        # Calculate the discrete-time feedforward matrix using the zero-order hold method
         # Dz = np.zeros_like(Cz)
         # for i in range(Bd.shape[1]):
-        #     Dz[:, i] = D + C @ np.linalg.matrix_power(Ad, i) @ D @ np.ones((1, Bd.shape[1])) @ np.heaviside(
-        #         Ts * np.arange(Bd.shape[1]) - i, 1)
+        #     Dz[:, i] = D + C @ np.linalg.matrix_power(Ad, i) @ D @ np.ones((1, Bd.shape[1])) @ np.heaviside(Ts * np.arange(Bd.shape[1]) - i, 1)
 
         Ad_, Bd_, Cd_, Dd_, dt = scipy.signal.cont2discrete((A, B, C, D),Ts)
 
         if domain.lower() == 'z':
-            C = Cz
-            D = Dz
+            C = np.diag(Cz)
+            # D = Dz
+            D = 0
+
+        print('Delta Ad:',Ad_-Ad,sep='\n')
+        print('Delta Bd:',Bd_-Bd,sep='\n')
 
         return Ad, Bd, C, D
 

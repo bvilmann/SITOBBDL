@@ -19,7 +19,8 @@ class Solver:
     def load_model(self,model,
                    discretize:bool=False,
                    dt:float=None,
-                   params:dict=None):
+                   params:dict=None,
+                   domain:str = 't'):
         """
         :param model:
         :param discretize:
@@ -80,7 +81,8 @@ class Solver:
             else:
 
                 # A, B, C, D, dt = scipy.signal.cont2discrete((A, B, C, D),dt)
-                self.method.c2d(A,B,C,D,dt)
+                A, B, C, D = self.method.c2d(A,B,C,D,dt,domain=domain)
+
         # Store state and relevant data
         self.A, self.B, self.C, self.D = A, B, C, D
         self.discretize = discretize
