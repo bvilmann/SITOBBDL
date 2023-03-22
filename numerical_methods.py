@@ -11,24 +11,7 @@ class NumericalMethods:
 
         return
 
-    def c2d(self,A, B, C, D, Ts,domain='t'):
-        """
-        Discretize a continuous-time dynamical system represented by state equations (A, B, C, D matrices)
-        using the zero-order hold method.
-
-        Parameters:
-        - A: numpy array, the state matrix.
-        - B: numpy array, the input matrix.
-        - C: numpy array, the output matrix.
-        - D: numpy array, the feedforward matrix.
-        - Ts: float, the sampling period.
-
-        Returns:
-        - Ad: numpy array, the discrete-time state matrix.
-        - Bd: numpy array, the discrete-time input matrix.
-        - Cd: numpy array, the discrete-time output matrix.
-        - Dd: numpy array, the discrete-time feedforward matrix.
-        """
+    def c2d(self,A, B, C, D, Ts):
 
         # Calculate the continuous-time state transition matrix using the matrix exponential
         At = np.block([[A, B], [np.zeros((1, A.shape[1])), np.zeros((1, 1))]])
@@ -58,35 +41,7 @@ class NumericalMethods:
 
         return Ad, Bd, C, D
 
-    def euler_step(self, x, u, f, t, dt:float):
-        """
-        Compute the next state of a dynamical system using the Euler method.
-
-        Parameters:
-        x (numpy.ndarray): Current state of size (n, 1)
-        u (numpy.ndarray): Input of size (m, 1)
-        f (function): Function that computes the derivative of x with respect to time
-        t (float): time instance for evaluating input functions
-        dt (float): Time step size
-
-        Returns:
-        x_next (numpy.ndarray): Next state of size (n, 1)
-        """
-
-        # Compute the derivative of x with respect to time
-        dxdt = f(t, x, u, dt)
-        # print(dxdt)
-
-        # Update the state using the Euler method
-        x_next = x + dt * dxdt
-
-        # Using euler forward method
-        dxdt = f(t, x, u, dt)
-        x_next = x + dt * dxdt
-
-        return x_next
-
-    def kalman_filter(self, A, B, C, D, y, u, P0, Q, R, x0=None):
+    def init_kalman_filter(self, A, B, C, D, y, u, R0, R1, R2, x0=None):
         """
         Implements the Kalman filter for state estimation given state space matrices and measurements.
 
@@ -98,30 +53,28 @@ class NumericalMethods:
             y (ndarray): Array of measured outputs, with shape (num_measurements, num_outputs)
             u (ndarray): Array of inputs, with shape (num_measurements, num_inputs)
             x0 (ndarray): Initial state estimate, with shape (num_states, 1)
-            P0 (ndarray): Initial state covariance matrix, with shape (num_states, num_states)
-            Q (ndarray): Process noise covariance matrix, with shape (num_states, num_states)
-            R (ndarray): Measurement noise covariance matrix, with shape (num_outputs, num_outputs)
+            P0 = R0 (ndarray): Initial state covariance matrix, with shape (num_states, num_states)
+            Q =  R1 (ndarray): Process noise covariance matrix, with shape (num_states, num_states)
+            R =  R2 (ndarray): Measurement noise covariance matrix, with shape (num_outputs, num_outputs)
 
         Returns:
             x_hat (ndarray): Array of estimated states, with shape (num_measurements, num_states)
             y_hat (ndarray): Array of estimated outputs, with shape (num_measurements, num_outputs)
         """
         # Initialize arrays
-        num_measurements = y.shape[0]
-        num_states = A.shape[0]
-        num_outputs = C.shape[0]
-        x_hat = np.zeros((num_measurements, num_states))
-        y_hat = np.zeros((num_measurements, num_outputs))
-
-        if x0 is None:
-            x0 = np.zeros(num_states)
-
+        n_y = y.shape[0]
+        n = A.shape[0]
+        m = C.shape[0]
+        x_hat = np.zeros((n_y, n))
+        y_hat = np.zeros((n_y, m))
 
         # Initialize state estimates and covariance
         x_hat[0] = x0.reshape(-1)
-        P = P0
+        P = R0
+        Q = R1
+        R = R2
 
-        for k in range(num_measurements - 1):
+        for k in range(n_y - 1):
             # Prediction step
             x_hat_priori = A @ x_hat[k] + B @ u[k]
             P_priori = A @ P @ A.T + Q
@@ -129,10 +82,13 @@ class NumericalMethods:
             # Update step
             K = P_priori @ C.T @ np.linalg.inv(C @ P_priori @ C.T + R)
             x_hat[k + 1] = x_hat_priori + K @ (y[k] - C @ x_hat_priori - D @ u[k])
-            P = (np.eye(num_states) - K @ C) @ P_priori
+            P = (np.eye(n) - K @ C) @ P_priori
 
             # Compute estimated output
             y_hat[k] = C @ x_hat[k + 1] + D @ u[k]
+
+            # Calculate maximum likelihood
+
 
         return x_hat, y_hat, (K, P)
 
@@ -149,9 +105,52 @@ class NumericalMethods:
         result = minimize(lambda x: -np.sum(np.log(likelihood(x))), x0=[mean, std_dev])
 
         # Return the maximum likelihood estimates of the mean and standard deviation
-        return result.x[0], result.x[1]
+        return result
 
-    def maximum_a_posteriori_normal(data, prior_mean, prior_std_dev, prior_weight):
+    import numpy as np
+    from scipy.optimize import minimize
+
+    def kalman_filter_mle(self,Y, model):
+        """
+        Calculate the maximum likelihood estimate (MLE) of the Kalman filter parameters.
+
+        Parameters:
+            Y (ndarray): A 2D array of shape (num_timesteps, num_observed_variables) containing the observed measurements.
+            model (KalmanFilterModel): An object representing the state-space model for the Kalman filter.
+
+        Returns:
+            ndarray: An array of estimated parameter values, ordered as [Q, R, x0, P0], where Q and R are the process and measurement noise covariance matrices, x0 is the initial state estimate, and P0 is the initial error covariance matrix.
+        """
+
+        # Define the likelihood function as a function of the parameters
+        def likelihood(params):
+            Q, R, x0, P0 = params
+            num_timesteps, num_observed_variables = Y.shape
+
+            # Initialize the Kalman filter with the estimated parameters
+            model.initialize(Q, R, x0, P0)
+
+            # Calculate the log-likelihood of the observations given the model parameters
+            log_likelihood = 0
+            for i in range(num_timesteps):
+                observation = Y[i]
+                predicted_observation = model.observe()
+                log_likelihood += np.log(model.pdf(observation, predicted_observation))
+                model.update(observation)
+
+            # Return the negative of the log-likelihood, since we want to maximize it
+            return -log_likelihood
+
+        # Initialize the parameter estimates to the model defaults
+        initial_params = [model.Q, model.R, model.x, model.P]
+
+        # Use the Nelder-Mead optimization algorithm to find the parameter values that maximize the likelihood function
+        result = minimize(likelihood, initial_params, method='Nelder-Mead')
+
+        # Return the estimated parameter values
+        return result.x
+
+    def maximum_a_posteriori_normal(self, data, prior_mean, prior_std_dev, prior_weight):
         # Calculate the sample mean and standard deviation
         mean = np.mean(data)
         std_dev = np.std(data)
