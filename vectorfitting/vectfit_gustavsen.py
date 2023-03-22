@@ -777,19 +777,19 @@ def vectfit3(f,s,poles,weight,**kwargs):
 
         fit = np.transpose(fit)
 
-        A = SERA
-        poles = A
-        if opts.skip_res!=1:
-            B = SERB
-            C = SERC
-            D = SERD
-            E = SERE
-        else:
-            B = ones(N, 1)
-            C = zeros(Nc, N)
-            D = zeros(Nc, Nc)
-            E = zeros(Nc, Nc)
-            rmserr = 0
+    A = SERA
+    poles = A
+    if opts.skip_res!=1:
+        B = SERB
+        C = SERC
+        D = SERD
+        E = SERE
+    else:
+        B = ones(N, 1)
+        C = zeros(Nc, N)
+        D = zeros(Nc, Nc)
+        E = zeros(Nc, Nc)
+        rmserr = 0
     # %============================================================
     # % Convert into real state - space model
     # %============================================================

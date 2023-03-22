@@ -134,6 +134,7 @@ def calculate_residues(f, s, poles, rcond=-1):
 
     A[:, N] = 1
     A[:, N+1] = s
+
     # Solve Ax == b using pseudo-inverse
     b = f
     A = vstack((real(A), imag(A)))
@@ -232,7 +233,7 @@ if __name__ == '__main__':
 
     test_f = sum(c/(test_s - a) for c, a in zip(test_residues, test_poles))
     test_f += test_d + test_h*test_s
-    vectfit_auto(test_f, test_s)
+    # vectfit_auto(test_f, test_s)
 
     poles, residues, d, h = vectfit_auto_rescale(test_f, test_s)
     fitted = model(test_s, poles, residues, d, h)
