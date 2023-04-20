@@ -700,54 +700,115 @@ class MVF:
         # Return the state-space matrices
         return SER
     
-    def plot(self,f,s,fit):
+    def plot(self,f,s,fit,xmax=None,plot_err:bool=True,plot_ser:bool=True):
         diff, rms_error, ci, signal_error_ratio = self.evaluate_error(f,fit)
         
         fig, ax = plt.subplots(2,1,dpi=200,figsize=(9,6),sharex=True)
         
+        s_f = s.imag/(2*np.pi)
+        
         # Magnitude plot
-        ax[0].plot(s.imag, abs(f),color='blue',zorder=2)
-        ax[0].plot(s.imag, abs(fit),color='lightblue',ls='--',zorder=3)
+        ax[0].plot(s_f, abs(f),color='blue',zorder=2)
+        ax[0].plot(s_f, abs(fit),color='lightblue',ls='--',zorder=3)
         ax[0].set(yscale='log',ylabel='Magnitude')
         # ax[0].set(ylabel='Magnitude')
         if self.opts.plot_ci:
-            ax[0].fill_between(s.imag, abs(f)+(ci[0]),abs(f)-(ci[1]),alpha=0.25,color='red',zorder=5)
-            # ax[0].plot(s.imag, abs(f+ci[0]),color='lightblue',ls='--',zorder=3)            
+            ax[0].fill_between(s_f, abs(f)+(ci[0]),abs(f)-(ci[1]),alpha=0.25,color='red',zorder=5)
+            # ax[0].plot(s_f, abs(f+ci[0]),color='lightblue',ls='--',zorder=3)            
 
-        if self.opts.plot_err:
+        if plot_err:
             ax0 = ax[0].twinx()
             ax0.set(yscale='log')
             ax0.set_ylabel(f'Error: {rms_error}', color='tab:blue')
-            ax0.plot(s.imag,abs(diff), color='tab:blue',alpha=0.5)
+            ax0.plot(s_f,abs(diff), color='tab:blue',alpha=0.25)
             ax0.tick_params(axis='y', labelcolor='tab:blue')
 
-        if self.opts.plot_ser:
+        if plot_ser:
             ax1 = ax[0].twinx()
             # ax1.set(yscale='log')
             ax1.set_ylabel('$SER^{-1}$', color='tab:red')
-            ax1.plot(s.imag,1/signal_error_ratio, color='tab:red',alpha=0.5)
+            ax1.plot(s_f,1/signal_error_ratio, color='tab:red',alpha=0.25)
             ax1.tick_params(axis='y', labelcolor='tab:red')
             ax1.spines["right"].set_position(("axes", 1.1))
 
         # Phase plot
-        ax[1].plot(s.imag, np.angle(f,deg=True),color='green',zorder=2)        
-        ax[1].plot(s.imag, np.angle(fit,deg=True),color='lightgreen',ls='--',zorder=3)
+        ax[1].plot(s_f, np.angle(f,deg=True),color='green',zorder=2)        
+        ax[1].plot(s_f, np.angle(fit,deg=True),color='lightgreen',ls='--',zorder=3)
         ax[1].set(xlabel='f [Hz]',ylabel='Phase [deg]')
 
         # Formatting options
         for i in range(2):
             ax[i].grid()
             ax[i].axhline(0,color='k',lw=0.75)
-            ax[i].set(xlim=(s.imag.min(),s.imag.max()))
+            ax[i].set(xlim=(s_f.min(),(xmax,s_f.max())[xmax is None]))
         
         return
 
 mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2)
 
-fit, SER, (poles, residues, d, h), (diff, rms_error) = mvf.test()
+# fit, SER, (poles, residues, d, h), (diff, rms_error) = mvf.test()
+
+#%%
+def rect_form(m,p,deg=True):
+    if deg: s = np.pi/180
+    
+    z = m*(np.cos(p*s)+1j*np.sin(p*s))
+    
+    return z
+
+#%% CALCULATED FREQUENCY RESPONSE 
+f_calc = pd.read_csv(f'C:\\Users\\bvilm\\PycharmProjects\\SITOBB\\data\\freq\\cable_1C_freq_calc.txt',header=0,index_col=0)
+f_calc = f_calc[f_calc.index <= 2e3]
+
+f = f_calc['real'] + f_calc['imag']*1j
+s = f_calc.index.values*1j*2*np.pi
+
+# Get fit, poles, residues, d, and h scalars
+mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2,plot_ser=False,plot_err=False)
+fit, SER, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
+mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
+
+#%% CALCULATED FREQUENCY RESPONSE w ARTIFICIAL ATTENUATION
+f_calc = pd.read_csv(f'C:\\Users\\bvilm\\PycharmProjects\\SITOBB\\data\\freq\\cable_1C_freq_calc.txt',header=0,index_col=0)
+# f_calc = f_calc[f_calc.index <= 2e3]
+
+f = f_calc['real'] + f_calc['imag']*1j
+f = f*np.linspace(1,0.0,len(f))
+s = f_calc.index.values*1j*2*np.pi
+
+# Get fit, poles, residues, d, and h scalars
+mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2,plot_ser=False,plot_err=False)
+fit, SER, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
+mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
+
+#%%
+f_fdcm = np.genfromtxt(r'C:\Users\bvilm\PycharmProjects\SITOBB\data\freq\Harm_1c_fdcm.out',skip_header=1)
+f = rect_form(f_fdcm[:,1],f_fdcm[:,2])
+s = f_fdcm[:,0]*1j*2*np.pi
+# Get fit, poles, residues, d, and h scalars
+mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2,plot_ser=False,plot_err=False)
+fit, SER, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
+mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
+
+#%%
+f_fdcm = np.genfromtxt(r'C:\Users\bvilm\PycharmProjects\SITOBB\data\freq\Harm_1c_pi.out',skip_header=1)
+f = rect_form(f_fdcm[:,1],f_fdcm[:,2])
+s = f_fdcm[:,0]*1j*2*np.pi
+
+# Get fit, poles, residues, d, and h scalars
+mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2,plot_ser=False,plot_err=False)
+fit, SER, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
+mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
+
+#%%
+# Plot test data
 
 
 #%%
+"""
+THIS IT
+
+"""
 import pandas as pd
 
 class HCA:

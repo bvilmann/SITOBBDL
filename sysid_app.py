@@ -5,18 +5,26 @@ import control as ctrl
 import numpy as np
 from numpy.linalg import inv, det, eigvals, eig, norm 
 from numpy import sqrt, log, real, imag
-import scipy
 from scipy.integrate import solve_ivp
 from scipy.optimize import minimize, LinearConstraint
-from scipy import stats
+from scipy import stats, signal, linalg
 
 # plot packages
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.colors import LogNorm
 from matplotlib import cm
+import linecache
+
+# Default 
+plt.rcParams.update({'lines.markeredgewidth': 1})
+plt.rcParams.update({'font.size':18})
+plt.rcParams['text.usetex'] = False
+plt.rcParams['text.latex.preamble'] = r"\usepackage{bm} \usepackage{amsmath} \usepackage{amssymb}"
+
 prop_cycle = plt.rcParams['axes.prop_cycle']
 clrs = prop_cycle.by_key()['color']
+
 
 #
 # from scipy.stats import norm
@@ -26,6 +34,16 @@ import datetime
 import copy
 
 import pandas as pd
+
+def get_machine_precision(show=True):
+    float32 = np.finfo(np.float32).eps
+    float64 = np.finfo(np.float64).eps
+    if show:
+        print('float32:\t',float32)
+        print('float64:\t',float64)
+
+    return float32, float64
+
 
 # https://pypi.org/project/sysidentpy/
 # class ParamWrapper:
@@ -51,7 +69,7 @@ class ParamWrapper:
 
 
         # ------ Load model default parameters ------
-        if model in ['c1_s0_o3','c1_s0_o3_load','c1_s0_o2']:
+        if model in ['c1_s0_o3','c1_s0_o3_load','c1_s0_o2','c1_s0_o2_ZY']:
             self.params = ['Rin','Rload','R','L','C1','C2']
             self.R = 1
             self.Rin = 0.05 # BRK = 0.05
@@ -77,7 +95,6 @@ class ParamWrapper:
             # Adjusting 
             for k in self.params:
                 setattr(self, k, getattr(self, k)/self.Zbase)
-
 
         # ------ Converting param list into dict ------
         #
@@ -127,9 +144,14 @@ class OptionWrapper:
     
     def __init__(self,opts):
         self.err_tol = 1e-12
-        self.gradient = '2-point'
-        self.method = ''        
+        self.method = 'BFGS'        
         self.hess = None        
+        self.hessp = None        
+        self.jac = None
+        self.disp = False
+        self.epsilon = 1e-5
+        self.cnstr_lb_factor = 0.5
+        self.cnstr_ub_factor = 1.5
 
         # ------ Get custom parameters ------
         if opts is not None:
@@ -151,18 +173,16 @@ class SITOBBDS:
         
         return
         
-    def load_model(self,model=None,p=None,log:str=None):
+    def load_model(self,model=None,p=None,log:bool=False):
         if model is None: model = self.model
         if p is None: p = self.p
         
-        if isinstance(log,str):
-            if log == 'all':
-                for k,v in p.params.items():
-                    print(k,v,np.exp(v))
-                    # p.params[k] = np.exp(v)
-                    setattr(p,k,np.exp(v))
-            else:
-                setattr(p,log,np.exp(getattr(p,log)))
+        if log:
+            for k,v in p.params.items():
+                # print(k,v,np.exp(v))
+                # p.params[k] = np.exp(v)
+                # pass
+                setattr(p,k,np.exp(v))
         
         if isinstance(model, (list,tuple)):
             # ------ CUSTOM MODEL ------ 
@@ -192,6 +212,37 @@ class SITOBBDS:
             
             B = np.array([[0], [1 / (p.Rin * p.C1)], [0]])
             C = np.eye(n)
+            D = np.zeros(1)
+
+        elif isinstance(model,str) and model == 'c1_s0_o2_ZY':
+            # ------ Single core, no screen, 2nd order, two-port-network ------             
+            self.n = n = 8
+            zs = p.R + 1j*p.omega*p.L
+            zp1 = 0 + 1/(1j*p.omega*p.C1)
+            zp2 = 0 + 1/(1j*p.omega*p.C2)
+            ys  = 1/zs
+            yp1 = 1/zp1
+            yp2 = 1/zp2
+            gamma = np.sqrt(yp1*zs)
+            z0 = np.sqrt(zs/yp1)            
+
+            Y = np.array([[ys+yp1, -ys],
+                          [-ys, ys+yp2]])
+            Z = inv(Y)
+            
+            Za = np.vstack((np.hstack((Z.real, -Z.imag)),
+                           np.hstack((Z.imag, Z.real))))
+            Ya = np.vstack((np.hstack((Y.real, -Y.imag)),
+                           np.hstack((Y.imag, Y.real))))
+
+            Zero = np.zeros_like(Za)
+
+            A = np.vstack((np.hstack((Ya, -Za)),
+                           np.hstack((-Ya, Za))))
+
+            B = np.zeros((n,2))
+            B[0,0] = B[1,1] = 1
+            C = np.eye(n)*np.diag(np.array([(1,-1)[i==6 or i==7] for i in range(n)]))
             D = np.zeros(1)
 
         elif isinstance(model,str) and model == 'dummy1':
@@ -255,7 +306,7 @@ class SITOBBDS:
             else:                
                 # A, B, C, D, dt = scipy.signal.cont2discrete((A, B, C, D),dt)
                 A_d,B_d,C,D = self.c2d(A,B,C,D,dt)
-                
+            
         # ------ Data storage ------
         # Store state and relevant data
         self.A, self.B, self.C, self.D = A, B, C, D
@@ -286,8 +337,8 @@ class SITOBBDS:
         # if Sx is None: Sx = lambda: sx_random*((sx,1)[sx is None])*np.random.randn(m) + mu_x
         # if Sy is None: Sy = lambda: sy_random*((sy,1)[sy is None])*np.random.randn(m) + mu_y        
 
-        if mode not in ['sin','step','impulse']:
-            raise ValueError("Mode must be 'sin','step', or 'impulse'")
+        if mode not in ['sin','cos','-sin','-cos','step','impulse']:
+            raise ValueError("Mode must be 'sin','cos','step', or 'impulse'")
 
         
         # Parameter selection
@@ -297,6 +348,12 @@ class SITOBBDS:
         # Function evaluation
         if mode == 'sin':
             u = lambda t: amp*np.sin(self.p.omega*t+phi)*(0,1)[t>=t0]
+        elif mode == 'cos':
+            u = lambda t: amp*np.cos(self.p.omega*t+phi)*(0,1)[t>=t0]
+        elif mode == '-cos':
+            u = lambda t: -amp*np.cos(self.p.omega*t+phi)*(0,1)[t>=t0]
+        if mode == '-sin':
+            u = lambda t: -amp*np.sin(self.p.omega*t+phi)*(0,1)[t>=t0]
         elif mode == 'step':
             u = lambda t: amp*(0,1)[t>=t0]
         elif mode == 'impulse':
@@ -328,7 +385,6 @@ class SITOBBDS:
                 params['Rin'] = rin
                 params['Rload'] = rload
                 
-
                 # ------ Load parameters------
                 p = ParamWrapper(params,pu=True)
         
@@ -519,37 +575,13 @@ class SITOBBDS:
         return    
     
     #============================= PLOT METHODS =============================#
-    
-    def store_results(self,time,x,y,y_hat,):
-        # res = utils.results_wrapper({'t':time,
-        #                              'x':x,
-        #                              'y':y,
-        #                              'yhat':y_hat,
-        #                              'xhat':x_hat,
-        #                              'A_d_hat':A_d_hat,
-        #                              'thetahat':thetahat,
-        #                              'thetahat_guess':thetahat_guess,
-        #                              'sigma2':sigma2,
-        #                              'V':V,
-        #                              'J':J,
-        #                              'P':P,
-        #                              'K':K,
-        #                              'R':R,
-        #                              'eps':eps,
-        #                              'ML_est':ML_est,
-        #                              'V':V,
-        #                              })
-        
-        return
-
     def simulate(self,A,B,C,D,x0,u,t1,t2,dt,Sx=None,Sy=None):
         time = np.arange(t1,t2+dt,dt)
 
-
         # creating indices
         n_y = len(time)
-        n = self.A.shape[0]
-        m = self.C.shape[0]
+        n = A.shape[0]
+        m = C.shape[0]
 
         # Initialize arrays
         x   = np.zeros((n,n_y))
@@ -559,10 +591,6 @@ class SITOBBDS:
         if Sx is None: Sx = np.zeros((n,len(time)))
         if Sy is None: Sy = np.zeros((m,len(time)))
 
-        # Creating input function
-        # if Sx is None: Sx = lambda: sx_random*((sx,1)[sx is None])*np.random.randn(m) + mu_x
-        # if Sy is None: Sy = lambda: sy_random*((sy,1)[sy is None])*np.random.randn(m) + mu_y
-
         print('',f'Simulating discrete-time system:',sep='\n')
         t1_ = datetime.datetime.now()
         # initial values
@@ -571,9 +599,12 @@ class SITOBBDS:
         for k,t in enumerate(time[:-1]):
             # --------------- Solving x[k+1] ---------------
             # Calculate x[:, k + 1]
-            x[:,k+1] = A @ x[:,k] + B @ np.array([u[k]]) + Sx[:,k] #+ Sx() # TODO: Add noise, be aware of operator for u[k]
+            if len(u.shape) == 1:
+                x[:,k+1] = A @ x[:,k] + B @ np.array([u[k]]) + Sx[:,k] #+ Sx() # TODO: Add noise, be aware of operator for u[k]
+            else:
+                x[:,k+1] = A @ x[:,k] + B @ u[:,k] + Sx[:,k] #+ Sx() # TODO: Add noise, be aware of operator for u[k]
             y[:,k] = C @ x[:,k] + Sy[:,k] # + Sy() # TODO: Add noise, be aware of operator for u[k]
-        y[:,-1] = C @ x[:,-1] + Sx[:,-1] # TODO: Add noise, be aware of operator for u[k]
+        y[:,-1] = C @ x[:,-1] + Sy[:,-1] # TODO: Add noise, be aware of operator for u[k]
         t2_ = datetime.datetime.now()            
         print(f'Finished in: {(t2_-t1_).total_seconds()} s')
 
@@ -597,7 +628,6 @@ class SITOBBDS:
             for k in range(m):
                 # thetahat[:,:,k] = inv(x[:,k].reshape((n,1)) @ x[:,k].reshape((1,n)) - np.eye(n)*dt**2) @ x[:,k].reshape((n,1)) @ y[:,k].reshape((1,n))  
                 thetahat[:,:,k] =  y[:,k].reshape((n,1)) @ x[:,k].reshape((1,n)) @ inv(x[:,k].reshape((n,1)) @ x[:,k].reshape((1,n)) - np.eye(n)*dt**2)
-                
             
         else:
             # Initialize
@@ -661,6 +691,74 @@ class SITOBBDS:
         return x_hat_pred, y_hat_pred, eps, R
 
     #============================= ESTIMATION METHODS =============================#    
+
+    def param_estimation(self):
+        
+        return
+
+    def KF_estimation(self,A,B,C,D,x0,u,y,R0,R1,R2,t1,t2,dt,optimization_routine:bool=False):
+
+        time = np.arange(t1,t2+dt,dt)
+
+        # creating indices
+        n_y = len(time)
+        n = A.shape[0]
+        m = C.shape[0]
+
+        # Initialize arrays
+        eps = np.zeros((m,n_y))
+        x_hat_filt   = np.zeros((n,n_y))
+        x_hat_pred   = np.zeros((n,n_y))
+        y_hat_pred   = np.zeros((m,n_y))
+        P_filt       = np.zeros((n,n,n_y))
+        P_pred       = np.zeros((n,n,n_y))
+        K       = np.zeros((n,n,n_y))
+        R       = np.zeros((n,n,n_y))
+        
+        # 
+        u = np.matrix(u)
+
+        # Parameter estimation        
+        hx1     = np.zeros((n,n_y))
+        hx2     = np.zeros((m,n_y))
+        varphi  = np.zeros((2*n,n_y))
+        theta = np.zeros((2*n,n_y))
+
+        
+        # initial values
+        x_hat_pred[:,0] = x0
+        P_pred[:,:,0] = R[:,:,0] = R0
+        for k,t in enumerate(time):
+            # --------------- Parameter estimation part ---------------
+            if k >= n:
+                phi = x_hat_pred[:,k-1:k-n]
+                psi = u[:,k-1:k-n]
+                varphi[:,k] = np.vstack([phi,psi])
+            
+            # --------------- Calculating output ---------------
+            # Calculating output and estimated output
+            y_hat_pred[:,k] = C @ x_hat_pred[:,k] # + D @ u[k]
+
+            # Calculating error / innovation term
+            eps[:,k] = y[:,k] - y_hat_pred[:,k]
+    
+            # --------------- Discrete-time Kalman Filter  ---------------
+            # Calculate kalman gain
+            R[:, :, k] = C @ P_pred[:, :, k] @ C.T + R2 # R2 = Measurement noise covariance matrix.
+            K[:,:,k] = P_pred[:,:,k] @ C.T @ inv(R[:,:,k])
+    
+            # Measurement update
+            x_hat_filt[:,k] = x_hat_pred[:,k] + K[:,:,k] @ eps[:,k]
+            P_filt[:,:,k] = (np.eye(n) - K[:,:,k] @ C) @ P_pred[:,:,k]
+
+            # Time update
+            if k < len(time)-1:
+                # print(A)
+                x_hat_pred[:,k+1] = A @ x_hat_filt[:,k] + B @ np.array([u[k]])
+                P_pred[:, :, k+1] = A @ P_filt[:,:,k] @ A.T + R1 # TODO: R1 = B @ R1 @ B.T, B is not the input matrix in this context.
+        
+        return x_hat_pred, y_hat_pred, eps, R
+
     
     def dt_to_ct_zoh(self, H_z, Ts, T):
         """
@@ -680,12 +778,12 @@ class SITOBBDS:
         H_s : array_like
             The transfer function of the continuous-time system in s-domain.
         """
-        w, H_ejw = scipy.signal.freqz(H_z)
+        w, H_ejw = signal.freqz(H_z)
         H_r = np.sinc(w / np.pi / Ts)
         H_cjw = H_ejw * H_r
-        t, h_ct = scipy.signal.freqz(H_cjw, [1, 0], worN=2**14)
+        t, h_ct = signal.freqz(H_cjw, [1, 0], worN=2**14)
         h_ct = np.real(h_ct)
-        H_s = scipy.signal.TransferFunction(h_ct, [1, 0])
+        H_s = signal.TransferFunction(h_ct, [1, 0])
         return H_s
 
 
@@ -696,10 +794,11 @@ class SITOBBDS:
             A = A.reshape((n,n))
 
         # Calculate the continuous-time state transition matrix using the matrix exponential
-        At = np.block([[A, B], [np.zeros((1, A.shape[1])), np.zeros((1, 1))]])
-        eAt = scipy.linalg.expm(At * dt)
+        # At = np.block([[A, B], [np.zeros((1, A.shape[1])), np.zeros((1, 1))]])
+        At = np.block([[A, B], [np.zeros((B.shape[1], A.shape[1])), np.zeros((B.shape[1], B.shape[1]))]])
+        eAt = linalg.expm(At * dt)
         Ad = eAt[:A.shape[0], :A.shape[1]]
-        Bd = eAt[:A.shape[0], -1:]          
+        Bd = eAt[:A.shape[0], -B.shape[1]:]          
 
         # assign to class
         self.A_d, self.B_d = Ad, Bd
@@ -713,9 +812,9 @@ class SITOBBDS:
         # Bd = np.block([B_d, 0]).reshape(n + 1, 1)
         # Cd = np.block([C_d, D_d]).reshape(1, n + 1)
         
-        H_z = scipy.signal.ss2tf(A_d, B_d, C_d, D_d)[0]
+        H_z = signal.ss2tf(A_d, B_d, C_d, D_d)[0]
         H_s = self.dt_to_ct_zoh(H_z, Ts, T)
-        A_c, B_c, C_c, D_c = scipy.signal.tf2ss(H_s.num, H_s.den)
+        A_c, B_c, C_c, D_c = signal.tf2ss(H_s.num, H_s.den)
         
         return A_c[:, :n], B_c[:n], C_c[:, :n], D_c
     #============================= MODEL CHECKING METHODS =============================#
@@ -741,7 +840,7 @@ class SITOBBDS:
         expected_runs = (2*n - 1) / 3
         variance = (16*n - 29) / 90
         z = (runs - expected_runs) / np.sqrt(variance)
-        p_value = 2 * (1 - scipy.stats.norm.cdf(abs(z)))
+        p_value = 2 * (1 - stats.norm.cdf(abs(z)))
         if p_value < alpha:
             result = "Evidence of a change in signs in the residuals."
         else:
@@ -892,110 +991,47 @@ class SITOBBDS:
         return KDE
 
 
-    def ML_Wrapper(self,theta,A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt,r_idx,c_idx,opt_in,log):
-        # Load model
+    def ML_Wrapper(self,theta,A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt,log):
+        # Assuring positive values
+        # for i, p in enumerate(self.p.params):
+        #     if getattr(self.p,p) == 0:
+        #         setattr(self.p,p,1e-18)
 
-        # ------ Choose optimization domain ------
-        # Optimize in discrete-time domain
-        if opt_in == 'z':            
-            A, B, C, D = self.load_model()
-            n = A.shape[0]
-            # Discretize continous system
-            A_d,B_d,C,D = self.c2d(A,B,C,D,dt)
+        # # Assuring positive values
+        # for i, p in enumerate(self.p.params):
+        #     setattr(self.p,p,theta[i])                        
+        
+        # # if log:
+        # A, B, C, D = self.load_model(log=True)
+        
+        # # Discretize continous system
+        # A_d,B_d,C,D = self.c2d(A,B,C,D,dt)
 
-            # assigning theta to discrete system
-            if r_idx is None or c_idx is None:
-                A_d = theta.reshape((n,n))
-            else:
-                A_d[r_idx,c_idx] = theta
-                
-        # Optimize in modal domain
-        elif opt_in == 'm':
-            A, B, C, D = self.load_model()
-            n = A.shape[0]
-            lambd, R = eig(A)
-            L = inv(R)
-            P = R @ L.T
-            
-            if r_idx is None or c_idx is None:
-                P = theta.reshape((n,n))
-            else:
-                P[r_idx,c_idx] = theta
-                
-            R = P @ inv(L.T)
-            A = R @ np.diag(lambd) @ L     - np.diag(np.ones(n))*dt**2
-            A_d,B_d,C,D = self.c2d(A,B,C,D,dt)
-
-        # Optimize in QR domain, https://en.wikipedia.org/wiki/QR_decomposition
-        elif opt_in.lower() == 'q':
-            A, B, C, D = self.load_model()
-            n = A.shape[0]
-            Q, R = scipy.linalg.qr(A)
-            opt_sys = Q
-
-            if r_idx is None or c_idx is None:
-                Q = theta.reshape((n,n))
-            else:
-                Q[r_idx,c_idx] = theta
-
-            A = Q @ R                       #- np.diag(np.ones(n))*dt
-            A_d,B_d,C,D = self.c2d(A,B,C,D,dt)
-
-
-        # Optimize in continous-time domain
-        elif opt_in == 'c':    
-            A, B, C, D = self.load_model()
-            n = A.shape[0]
-            # assigning theta to continous system
-            if r_idx is None or c_idx is None:
-                A = theta
-            else:
-                scale = abs(A).max()
-                # A /= scale
-                A[r_idx,c_idx] = np.exp(theta)
-
-                # print(A)
-                # print(A[r_idx,c_idx])
-            A_d,B_d,C,D = self.c2d(A,B,C,D,dt)
+        # Base case
+        params = copy.deepcopy(self.custom_params)
     
-        # Optimize in parameter space
-        elif 'e_' in opt_in:
-            param_name = "_".join(opt_in.split('_')[1:])
-            # Assuring positive values
-            for i, p in enumerate(self.p.params):
-                if getattr(self.p,p) == 0:
-                    setattr(self.p,p,1e-18)
+        # Add perturbation
+        for i, (k,v) in enumerate(self.p.params.items()):
+            print(i,k,v,(theta[i],np.exp(theta[i]))[log])
+            params.update({k:theta[i]})
     
-            # Assuring positive values
-            if 'all' in opt_in:                
-                for i, p in enumerate(self.p.params):
-                    setattr(self.p,p,theta[i])                        
-            else:
-                setattr(self.p,param_name,theta[0])
-
-            # 
-            if not log:
-                param_name = None
-            
-            # if log:
-            A, B, C, D = self.load_model(log=param_name)
-            
-            # Discretize continous system
-            A_d,B_d,C,D = self.c2d(A,B,C,D,dt)
+        # Get model
+        p = ParamWrapper(params,'c1_s0_o3_load',pu=True)
+        A,B,C,D = self.load_model('c1_s0_o3_load',p=p,log=True)
+        Ad, Bd, _, _ = self.c2d(A, B, C, D, dt)
 
         # print(theta)
-
             
         # Evaluating cost function
-        J = self.ML(A_d,B_d,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt)
- 
+        J = self.ML(Ad,Bd,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt)
+  
         return J
 
     
-    def ML(self,A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt):        
+    def ML(self,Ad,Bd,C,D,x0, u, y, R0, R1, R2, t1, t2, dt):        
 
         # Get covariance and prediction error
-        _,_, eps,R = self.KalmanFilter(A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt,optimization_routine=True)
+        _,_, eps,R = self.KalmanFilter(Ad,Bd,C,D,x0, u, y, R0, R1, R2, t1, t2, dt,optimization_routine=True)
 
         # Evaluate the cost function from the batch sum
         J = 0
@@ -1003,284 +1039,93 @@ class SITOBBDS:
             J += 1/2*(np.log(det(R[:,:,k])) \
                       + np.log(2*np.pi)\
                       + eps[:,k].T @ inv(R[:,:,k]) @ eps[:,k]) 
-                
+        
+        # print(J)
+        
         return J
         
-    def ML_opt(self,A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt, thetahat0,r_idx=None,c_idx=None,opt_in='z',log:bool = True):
-        if opt_in == 'z':
-            opt_sys = self.c2d(A, B, C, D, dt)[0]
-            
-        elif opt_in == 'm':
-            lambd, R = eig(A)
-            L = inv(R)
-            P = opt_sys = R @ L.T
-            
-        elif opt_in.lower() == 'q':
-            Q, R = scipy.linalg.qr(A)
-            opt_sys = Q
-
-        elif opt_in == 'c':
-            opt_sys = A
-        elif 'e_' in opt_in :
-            opt_sys = np.array(list(self.p.params.values()))
-
-            if not 'all' in opt_in:                
-                if thetahat0 == 0 or sum(thetahat0) == 0:
-                    thetahat0 += 1e-12
-            
-                    
-        # If element wise, make sure to collect elementwise thetahat
-        if r_idx is None:
-            print('',f'Starting maximum likelihood estimation of dim(A)={A.shape}:',sep='\n')
-            t1_ = datetime.datetime.now()
-                
+    def ML_opt(self,A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt, thetahat0,log:bool = True):
         # Defining constraints (only reasonable for not optimization without log)
-        if isinstance(thetahat0,int) or isinstance(thetahat0,float):
-            N=1
-        else:
-            N = len(thetahat0)
-        
+        N = len(self.p.params.values())
+        self.vals = vals = np.array([v for v in self.p.params.values()])
         if log:
-            constraints = (LinearConstraint(np.eye(N), lb=np.log(np.ones(6)*1e-12), ub=np.log(np.ones(6)*1e12), keep_feasible=False))
+            constraints = (LinearConstraint(np.eye(N), lb=np.log(vals*self.opts.cnstr_lb_factor), ub=np.log(vals*self.opts.cnstr_ub_factor), keep_feasible=False))
         else:
-            constraints = (LinearConstraint(np.eye(N), lb=1e-12, ub=1e12, keep_feasible=False))        
-        
+            constraints = (LinearConstraint(np.eye(N), lb=vals*self.opts.cnstr_lb_factor, ub=vals*self.opts.cnstr_ub_factor, keep_feasible=False))
         
         # Minimization
         thetahat = minimize(self.ML_Wrapper,
-                            args=(A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt,r_idx,c_idx,opt_in,log),
+                            args=(A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt, log),
                             x0=thetahat0,
                             method=self.opts.method,
                             # jac = '3-point',
-                            jac = self.opts.gradient,
-                            # constraints=constraints,
+                            jac = self.opts.jac,
+                            constraints=constraints,
                             hess = self.opts.hess,
+                            hessp = self.opts.hessp,
                             # options={'disp':True,'gtol': 1e-12,'return_all':True,'bounds':(-0.5,0.5),'eps':1e-4},
-                            # options={'disp':True},
+                            options={'disp':self.opts.disp,
+                                     'eps':self.opts.epsilon,
+                                     'finite_diff_rel_step':self.opts.epsilon,
+                                     },
                             tol=self.opts.err_tol
                             )
-
-        print(thetahat,'\n')
-
-        # Print summary
-        if (r_idx is None or c_idx is None) and 'e_' not in opt_in:
-            n = int(np.sqrt(len(thetahat.x)))
-            ests = thetahat.x.reshape((n,n))            
-            t2_ = datetime.datetime.now()
-            
-            print(f'Finished in: {(t2_-t1_).total_seconds()} s')
-            print(f'#========= ESTIMATION SUMMARY OF A[:,:] =========#')
-            print('theta:\n',opt_sys)
-            print('thetahat0:\n',thetahat0)
-            print('thetahat:\n',ests)
-            print('Deviation:\n',(ests - opt_sys))
-            print('2-norm:\n',norm(ests - opt_sys))
-            print('Eigenvalues:\n',eigvals(ests))
-            print('')
-            if opt_in == 'z':
-                B_d = self.c2d(A, B, C, D, dt)[1]
-                A_hat = self.d2c(ests, B_d, C, D, dt)
-            elif opt_in == 'm':
-                lambd, R = eig(A)
-                L = inv(R)
-                P = ests
-                R = P @ inv(L.T)
-                A_hat  = R @ np.diag(lambd) @ L     + np.diag(np.ones(n))*dt**2
-            elif opt_in.lower() == 'q':
-                Q, R = scipy.linalg.qr(A)
-                A_hat = ests @ R
-    
-            elif opt_in in ['c']:
-                A_hat = ests
-            else:
-                A_hat = ests                
-                    
-            return thetahat, thetahat0, A_hat
-
-        elif 'e_' not in opt_in:
-            print(f'#========= ESTIMATION SUMMARY OF A[{r_idx},{c_idx}] =========#')
-            print('theta:\t\t',opt_sys[r_idx,c_idx])
-            print('thetahat0:\t',thetahat0)
-            print('thetahat:\t',thetahat.x)
-            print('Deviation:\t',(thetahat.x - opt_sys[r_idx,c_idx]))
-            # print('1-norm:\n',abs(thetahat.x - self.A))
-            print('')
-            
-            return thetahat, thetahat0
-        elif opt_in == 'e_all':
-            
-            return thetahat, thetahat0
-            
-        else:
+        if log:
             thetahat.x = np.exp(thetahat.x)
-            print(f'#========= ESTIMATION SUMMARY OF {list(self.p.params.keys())[r_idx]} =========#')
-            print('theta:\t\t',opt_sys[r_idx])
-            print('thetahat0:\t',thetahat0)
-            print('thetahat:\t',thetahat.x)
-            print('Deviation:\t',(thetahat.x - opt_sys[r_idx]))
-            # print('1-norm:\n',abs(thetahat.x - self.A))
-            print('')
-            
-            return thetahat, thetahat0
-            
+        # print(thetahat,'\n')
 
-    def ML_opt_elm(self,A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt, thetahat0, opt_in='z', stop_iter=1e9):               
-        if opt_in.lower() == 'z':
-            opt_sys = self.c2d(A, B, C, D, dt)[0]
-        elif opt_in.lower() == 'm':
-            lambd, R = eig(A)
-            L = inv(R)
-            P = opt_sys = R @ L.T
-            
-        elif opt_in.lower() == 'q':
-            Q, R = scipy.linalg.qr(A)
-            opt_sys = Q
-            
-        elif opt_in.lower() == 'c' or opt_in.lower() == 'e':
-            opt_sys = A
+        return thetahat, thetahat0
 
-        ests = np.zeros(self.A.shape)
-        devs = np.zeros(self.A.shape)
-        thetahat0s = np.zeros(self.A.shape)
 
-        print('',f'Starting maximum likelihood estimation of an individual element:',sep='\n')
-        t1_ = datetime.datetime.now()
-        cnt=0
-        for i in range(self.A.shape[0]):
-            for j in range(self.A.shape[1]):        
-                thetahat, thetahat0_ = self.ML_opt(A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt,thetahat0[i,j],r_idx=i,c_idx=j,opt_in=opt_in)
-                ests[i,j] = thetahat.x
-                devs[i,j] = thetahat.x - opt_sys[i,j]                    
-                thetahat0s[i,j] = thetahat0_
-                cnt+=1
-                if cnt >= stop_iter:
-                    break
-            if cnt >= stop_iter:
-                break
-        t2_ = datetime.datetime.now()            
-        print(f'Finished in: {(t2_-t1_).total_seconds()} s')
-
-        print(f'#========= FINAL ESTIMATION SUMMARY =========#')
-        print('System',opt_sys,sep='\n')
-        print('Estimated',ests,sep='\n')
-        print('Initial guess',thetahat0s,sep='\n')
-        print('Deviations',devs,sep='\n')
-        print('2-norm:\n',np.linalg.norm(devs))
-        print('Eigenvalues:\n',eigvals(ests))
-        print('')
-        
-        # return resulting A matrix
-        n = A.shape[0]
-        if opt_in == 'z':
-            B_d = self.c2d(A, B, C, D, dt)[1]
-            A_hat = self.d2c(ests, B_d, C, D, dt)
-        elif opt_in == 'm':
-            lambd, R = eig(A)
-            L = inv(R)
-            P = ests
-            R = P @ inv(L.T)
-            A_hat  = R @ np.diag(lambd) @ L     + np.diag(np.ones(n))*dt**2
-        elif opt_in.lower() == 'q':
-            Q, R = scipy.linalg.qr(A)
-            A_hat = ests @ R
-
-        elif opt_in in ['c','e']:
-            A_hat = ests
-        
-        return ests,thetahat0s, A_hat
-
-    def ML_opt_param(self,A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt, thetahat0=None, opt_in='multi', stop_iter=1e9,log:bool=True):
+    def ML_opt_param(self,A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt, thetahat0=None, log:bool=True):
+        # ------ Initializing ------
         # Selecting initial value
         if thetahat0 is None:
             thetahat0 = [v for k,v in self.p.params.items()]
         else:
-            thetahat0 = [thetahat0 for p in self.p.params.items()]
+            thetahat0 = [(thetahat0,1e-10)[thetahat0==0] for p in self.p.params.items()]
         
         ests = np.zeros(len(self.p.params))
         devs = np.zeros(len(self.p.params))
         thetahat0s = np.zeros(len(self.p.params))
 
-        if opt_in == 'single':
-            print('',f'Starting maximum likelihood estimation of an individual parameter:',sep='\n')
-            t1_ = datetime.datetime.now()
-            cnt=0
-            for i, (p,val) in enumerate(self.p.params.items()):
-                # ------ Load model ------            
-                self.p = p_ = ParamWrapper(self.custom_params,self.model,pu=self.pu)    
-    
-                A, B, C, D = self.load_model(self.model,p=p_)
-    
-                # ------ Optimize ------
-                thetahat, thetahat0_ = self.ML_opt(A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt,thetahat0[i],r_idx=i,c_idx=None,opt_in='e_' + (p,'all')[opt_in=='multi'],log=log)
-                # if log:
-                # thetahat.x = np.exp(thetahat.x)
-                ests[i] = thetahat.x
-                devs[i] = thetahat.x - val                    
-                thetahat0s[i] = thetahat0_
-                cnt+=1
-                if cnt >= stop_iter:
-                    break
-            t2_ = datetime.datetime.now()            
-    
-            # return resulting A matrix
-            p_hat = {}
-            for i, (p,val) in enumerate(self.p.params.items()):
-                p_hat[p] = ests[i]
-    
-            p_hat = ParamWrapper(p_hat,self.model)
-    
-            A_hat, _,_,_ = self.load_model(model=self.model,p=p_hat)
-    
-    
-            print(f'Finished in: {(t2_-t1_).total_seconds()} s')
-    
-            print(f'#========= FINAL ESTIMATION SUMMARY =========#')
-            print('System',self.p.params,sep='\n')
-            print('Estimated',ests,sep='\n')
-            print('Initial guess',thetahat0s,sep='\n')
-            print('Deviations',devs,sep='\n')
-            print('2-norm:\n',np.linalg.norm(devs))
-            print('Eigenvalues:\n',eigvals(A_hat))
-            print('')
-        elif opt_in == 'multi':
-            print('',f'Starting maximum likelihood estimation of all parameters:',sep='\n')
-            t1_ = datetime.datetime.now()
-            cnt=0
-            # # ------ Load model ------            
-            # self.p = p_ = ParamWrapper(self.custom_params,self.model,pu=self.pu)    
-            # A, B, C, D = self.load_model(self.model,p=p_)    
-            self.p = p_ = ParamWrapper(self.custom_params,self.model,pu=self.pu)    
-            A, B, C, D = self.load_model(self.model,p=p_)
+        # ------ Optimize ------
+        print('',f'Starting maximum likelihood estimation of all parameters:',sep='\n')
+        t1_ = datetime.datetime.now()
+        thetahat, thetahat0_ = self.ML_opt(A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt,thetahat0,log=log)
+        t2_ = datetime.datetime.now()            
 
-            # ------ Optimize ------
-            thetahat, thetahat0_ = self.ML_opt(A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt,thetahat0,r_idx=None,c_idx=None,opt_in='e_all',log=log)
-            ests = thetahat.x
-            devs = thetahat.x - np.array(list(self.p.params.values()))                    
-            thetahat0s = thetahat0_
+        # ------ Evaluate ------
+        if self.opts.disp: print('\n',thetahat)
 
-            t2_ = datetime.datetime.now()            
-    
-            # return resulting A matrix
-            p_hat = {}
-            for i, (p,val) in enumerate(self.p.params.items()):
-                p_hat[p] = ests[i]
-    
-            p_hat = ParamWrapper(p_hat,self.model)
-    
-            A_hat, _,_,_ = self.load_model(model=self.model,p=p_hat)
-    
-    
-            print(f'Finished in: {(t2_-t1_).total_seconds()} s')
-    
-            print(f'#========= FINAL ESTIMATION SUMMARY =========#')
-            print('System',self.p.params,sep='\n')
-            print('Estimated',ests,sep='\n')
-            print('Initial guess',thetahat0s,sep='\n')
-            print('Deviations',devs,sep='\n')
-            print('2-norm:\n',np.linalg.norm(devs))
-            print('Eigenvalues:\n',eigvals(A_hat))
-            print('')
+        ests = thetahat.x
+        devs = thetahat.x - np.array(list(self.p.params.values()))                    
+        thetahat0s = thetahat0_
+
+        # return resulting A matrix
+        p_hat = {}
+        for i, (p,val) in enumerate(self.p.params.items()):
+            p_hat[p] = ests[i]
+
+        p_hat = ParamWrapper(p_hat,self.model)
+
+        A_hat, _,_,_ = self.load_model(model=self.model,p=p_hat)
+
+        res = pd.DataFrame({'System':list(self.p.params.values()),
+                            'Lower bound':np.array(list(self.p.params.values()))*self.opts.cnstr_lb_factor,
+                            'Estimated':ests,
+                            'Upper bound':np.array(list(self.p.params.values()))*self.opts.cnstr_ub_factor,
+                            'Init guess':thetahat0,
+                            'Deviations':devs},index=list(self.p.params.keys()))
+
+        # ------ Print statements ------
+        print(f'Finished in: {(t2_-t1_).total_seconds()} s')
+        print(f'#========= FINAL ESTIMATION SUMMARY =========#')
+        print(res)
+        print('2-norm:\n',np.linalg.norm(devs))
+        print('Eigenvalues:\n',eigvals(A_hat))
+        print('')
             
-        return ests,thetahat0s, A_hat
+        return ests, thetahat, res, A_hat
 
 

@@ -1,0 +1,38 @@
+<Output device="EMTDC" version="2010" date="2023/04/20" time="13:47:45.000000">
+  <Domain name="Time" unit="s" mult="0.0" skew="0.0">
+    <Sample rate="100000.0" end="15000" />
+  </Domain>
+  <List classid="Analog">
+    <Analog name="Main(0):Vabc_s" index="0" id="1936477385:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vabc_a1" index="1" id="44513713:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vabc_a2" index="2" id="2005216804:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Iabc_s" index="3" id="395104796:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vabc_b1" index="4" id="1635892948:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Iabc_a1" index="5" id="1518430741:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vabc_b2" index="6" id="1216339671:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Iabc_a2" index="7" id="67574628:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vrms_s" index="8" id="832338111:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vabc_c1" index="9" id="559342477:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Iabc_b1" index="10" id="1598119621:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vrms_a1" index="11" id="172179544:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vabc_c2" index="12" id="1487724683:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Iabc_b2" index="13" id="244771529:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vrms_a2" index="14" id="1583470501:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Irms_s" index="15" id="1532323155:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Iabc_c1" index="16" id="239748042:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vrms_b1" index="17" id="1916764739:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Irms_a1" index="18" id="1635178789:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Iabc_c2" index="19" id="2121856590:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vrms_b2" index="20" id="715017362:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Irms_a2" index="21" id="1414436794:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vrms_c1" index="22" id="1421112637:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Irms_b1" index="23" id="37538558:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Vrms_c2" index="24" id="1150819251:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Irms_b2" index="25" id="566345493:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Irms_c1" index="26" id="1707128514:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):Irms_c2" index="27" id="979119712:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):BRK_r" index="28" id="2091599514:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+    <Analog name="Main(0):BRK_s" index="29" id="1745017941:0" label="" dim="1" unit="" min="-2.0" max="2.0" />
+  </List>
+  <List classid="Digital" />
+</Output>
