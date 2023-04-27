@@ -19,6 +19,7 @@ prop_cycle = plt.rcParams['axes.prop_cycle']
 clrs = prop_cycle.by_key()['color']
 
 #
+import linecache
 # from scipy.stats import norm
 import SITOBBDS_utils as utils
 from numerical_methods import NumericalMethods
@@ -53,12 +54,14 @@ class ParamWrapper:
         # ------ Load model default parameters ------
         if model in ['c1_s0_o3','c1_s0_o3_load','c1_s0_o2']:
             self.params = ['Rin','Rload','R','L','C1','C2']
+            self.params = ['Rin','Rload','R','L','C']
             self.R = 1
             self.Rin = 0.05 # BRK = 0.05
             self.Rload = 100 # BRK = 0.05
             self.L = 1e-3
-            self.C1 = 0.5e-6
-            self.C2 = 0.5e-6
+            self.C = 0.5e-6
+            self.C1 = self.C
+            self.C2 = self.C
             
         elif model == 'Cable_2':
             self.n = n = 7
@@ -130,6 +133,8 @@ class OptionWrapper:
         self.gradient = '2-point'
         self.method = ''        
         self.hess = None        
+        self.epsilon = 1e-4
+        self.disp = True
 
         # ------ Get custom parameters ------
         if opts is not None:
@@ -1024,9 +1029,9 @@ class SITOBBDS:
         elif 'e_' in opt_in :
             opt_sys = np.array(list(self.p.params.values()))
 
-            if not 'all' in opt_in:                
-                if thetahat0 == 0 or sum(thetahat0) == 0:
-                    thetahat0 += 1e-12
+            # if not 'all' in opt_in:                
+            #     if thetahat0 == 0 or sum(thetahat0) == 0:
+            #         thetahat0 += 1e-12
             
                     
         # If element wise, make sure to collect elementwise thetahat
@@ -1040,10 +1045,10 @@ class SITOBBDS:
         else:
             N = len(thetahat0)
         
-        if log:
-            constraints = (LinearConstraint(np.eye(N), lb=np.log(np.ones(6)*1e-12), ub=np.log(np.ones(6)*1e12), keep_feasible=False))
-        else:
-            constraints = (LinearConstraint(np.eye(N), lb=1e-12, ub=1e12, keep_feasible=False))        
+        # if log:
+        #     constraints = (LinearConstraint(np.eye(N), lb=np.log(np.ones(6)*1e-12), ub=np.log(np.ones(6)*1e12), keep_feasible=False))
+        # else:
+        #     constraints = (LinearConstraint(np.eye(N), lb=1e-12, ub=1e12, keep_feasible=False))        
         
         
         # Minimization
@@ -1056,6 +1061,10 @@ class SITOBBDS:
                             # constraints=constraints,
                             hess = self.opts.hess,
                             # options={'disp':True,'gtol': 1e-12,'return_all':True,'bounds':(-0.5,0.5),'eps':1e-4},
+                            # options={'disp':self.opts.disp,
+                            #          'eps':self.opts.epsilon,
+                            #          'finite_diff_rel_step':self.opts.epsilon,
+                            #          },
                             # options={'disp':True},
                             tol=self.opts.err_tol
                             )
