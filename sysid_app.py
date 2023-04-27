@@ -19,12 +19,11 @@ import linecache
 # Default 
 plt.rcParams.update({'lines.markeredgewidth': 1})
 plt.rcParams.update({'font.size':18})
-plt.rcParams['text.usetex'] = False
+# plt.rcParams['text.usetex'] = False
+plt.rcParams['text.usetex'] = True
 plt.rcParams['text.latex.preamble'] = r"\usepackage{bm} \usepackage{amsmath} \usepackage{amssymb}"
-
 prop_cycle = plt.rcParams['axes.prop_cycle']
 clrs = prop_cycle.by_key()['color']
-
 
 #
 # from scipy.stats import norm
@@ -71,12 +70,14 @@ class ParamWrapper:
         # ------ Load model default parameters ------
         if model in ['c1_s0_o3','c1_s0_o3_load','c1_s0_o2','c1_s0_o2_ZY']:
             self.params = ['Rin','Rload','R','L','C1','C2']
+            self.params = ['Rin','Rload','R','L','C']
             self.R = 1
             self.Rin = 0.05 # BRK = 0.05
             self.Rload = 100 # BRK = 0.05
             self.L = 1e-3
-            self.C1 = 0.5e-6
-            self.C2 = 0.5e-6
+            self.C = 0.5e-6
+            self.C1 = self.C
+            self.C2 = self.C
             
         elif model == 'Cable_2':
             self.n = n = 7
@@ -149,6 +150,7 @@ class OptionWrapper:
         self.hessp = None        
         self.jac = None
         self.disp = False
+        self.verbose = False
         self.epsilon = 1e-5
         self.cnstr_lb_factor = 0.5
         self.cnstr_ub_factor = 1.5
@@ -173,17 +175,12 @@ class SITOBBDS:
         
         return
         
-    def load_model(self,model=None,p=None,log:bool=False):
+    def load_model(self,model=None,p=None,verbose:bool = False):
         if model is None: model = self.model
-        if p is None: p = self.p
-        
-        if log:
-            for k,v in p.params.items():
-                # print(k,v,np.exp(v))
-                # p.params[k] = np.exp(v)
-                # pass
-                setattr(p,k,np.exp(v))
-        
+        # if p is None: p = self.p
+        if p is None: p = copy.deepcopy(self.p)
+                    
+        # Create model
         if isinstance(model, (list,tuple)):
             # ------ CUSTOM MODEL ------ 
             model='Custom'
@@ -273,7 +270,9 @@ class SITOBBDS:
             C = np.eye(n)
             D = np.zeros(1)
 
-                
+        if verbose:
+            print(A,B,C,D,sep='\n')
+            
         return A, B, C, D
 
     
@@ -331,7 +330,7 @@ class SITOBBDS:
         
         return
     
-    
+        
     def create_input(self, t1, t2, dt, amp=None, phi=None, t0:float = 0, mode:str='sin'):
 
         # if Sx is None: Sx = lambda: sx_random*((sx,1)[sx is None])*np.random.randn(m) + mu_x
@@ -989,42 +988,31 @@ class SITOBBDS:
         print(f'Finished in: {(t2_-t1_).total_seconds()} s')
 
         return KDE
-
-
-    def ML_Wrapper(self,theta,A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt,log):
-        # Assuring positive values
-        # for i, p in enumerate(self.p.params):
-        #     if getattr(self.p,p) == 0:
-        #         setattr(self.p,p,1e-18)
-
-        # # Assuring positive values
-        # for i, p in enumerate(self.p.params):
-        #     setattr(self.p,p,theta[i])                        
-        
-        # # if log:
-        # A, B, C, D = self.load_model(log=True)
-        
-        # # Discretize continous system
-        # A_d,B_d,C,D = self.c2d(A,B,C,D,dt)
-
-        # Base case
-        params = copy.deepcopy(self.custom_params)
     
-        # Add perturbation
-        for i, (k,v) in enumerate(self.p.params.items()):
-            print(i,k,v,(theta[i],np.exp(theta[i]))[log])
-            params.update({k:theta[i]})
-    
-        # Get model
-        p = ParamWrapper(params,'c1_s0_o3_load',pu=True)
-        A,B,C,D = self.load_model('c1_s0_o3_load',p=p,log=True)
-        Ad, Bd, _, _ = self.c2d(A, B, C, D, dt)
+    def ML_Wrapper(self,theta,opt_params,A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt,log):
 
-        # print(theta)
+        # Perturb parameters
+        p = copy.deepcopy(self.p)
+        for i, param_name in enumerate(opt_params):           
+            setattr(p,param_name,np.exp(theta[i]))
+
+        # Get continous system
+        A, B, C, D = self.load_model(p = p)
+        
+        # Discretize continous system
+        Ad, Bd, C, D = self.c2d(A,B,C,D,dt)
+
             
         # Evaluating cost function
         J = self.ML(Ad,Bd,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt)
-  
+
+        # Print verbose
+        if self.opts.verbose: 
+            for i, param_name in enumerate(opt_params):
+                print(i,opt_params[i],theta[i],np.exp(theta[i]))
+            print(theta)
+    
+
         return J
 
     
@@ -1044,29 +1032,31 @@ class SITOBBDS:
         
         return J
         
-    def ML_opt(self,A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt, thetahat0,log:bool = True):
+    def ML_opt(self,opt_params,A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt, thetahat0,log:bool = True):
         # Defining constraints (only reasonable for not optimization without log)
-        N = len(self.p.params.values())
-        self.vals = vals = np.array([v for v in self.p.params.values()])
+        N = len(opt_params)
+        self.vals = vals = np.array([self.p.params[k] for k in opt_params])
         if log:
             constraints = (LinearConstraint(np.eye(N), lb=np.log(vals*self.opts.cnstr_lb_factor), ub=np.log(vals*self.opts.cnstr_ub_factor), keep_feasible=False))
         else:
             constraints = (LinearConstraint(np.eye(N), lb=vals*self.opts.cnstr_lb_factor, ub=vals*self.opts.cnstr_ub_factor, keep_feasible=False))
+
+        print(thetahat0)
         
         # Minimization
         thetahat = minimize(self.ML_Wrapper,
-                            args=(A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt, log),
+                            args=(opt_params,A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt, log),
                             x0=thetahat0,
                             method=self.opts.method,
                             # jac = '3-point',
                             jac = self.opts.jac,
-                            constraints=constraints,
+                            constraints=(None,constraints)[self.opts.method == 'SLSQP'],
                             hess = self.opts.hess,
                             hessp = self.opts.hessp,
                             # options={'disp':True,'gtol': 1e-12,'return_all':True,'bounds':(-0.5,0.5),'eps':1e-4},
                             options={'disp':self.opts.disp,
-                                     'eps':self.opts.epsilon,
-                                     'finite_diff_rel_step':self.opts.epsilon,
+                                     # 'eps':self.opts.epsilon,
+                                     # 'finite_diff_rel_step':self.opts.epsilon,
                                      },
                             tol=self.opts.err_tol
                             )
@@ -1077,46 +1067,52 @@ class SITOBBDS:
         return thetahat, thetahat0
 
 
-    def ML_opt_param(self,A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt, thetahat0=None, log:bool=True):
+    def ML_opt_param(self,opt_params,A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt, thetahat0=None, log:bool=True):
+        self.opt_params = opt_params
+        vals = np.array([self.p.params[k] for k in opt_params])
+
         # ------ Initializing ------
         # Selecting initial value
         if thetahat0 is None:
-            thetahat0 = [v for k,v in self.p.params.items()]
+            thetahat0 = [self.p.params[k] for k in opt_params]
         else:
-            thetahat0 = [(thetahat0,1e-10)[thetahat0==0] for p in self.p.params.items()]
+            thetahat0 = [(self.p.params[k],1e-10)[thetahat0==0] for k in opt_params]
         
-        ests = np.zeros(len(self.p.params))
-        devs = np.zeros(len(self.p.params))
-        thetahat0s = np.zeros(len(self.p.params))
+        ests = np.zeros(len(opt_params))
+        devs = np.zeros(len(opt_params))
+        thetahat0s = np.zeros(len(opt_params))
 
         # ------ Optimize ------
         print('',f'Starting maximum likelihood estimation of all parameters:',sep='\n')
         t1_ = datetime.datetime.now()
-        thetahat, thetahat0_ = self.ML_opt(A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt,thetahat0,log=log)
+        thetahat, thetahat0_ = self.ML_opt(opt_params,A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt,thetahat0,log=log)
         t2_ = datetime.datetime.now()            
 
         # ------ Evaluate ------
         if self.opts.disp: print('\n',thetahat)
 
         ests = thetahat.x
-        devs = thetahat.x - np.array(list(self.p.params.values()))                    
+        devs = thetahat.x - vals
         thetahat0s = thetahat0_
 
         # return resulting A matrix
         p_hat = {}
-        for i, (p,val) in enumerate(self.p.params.items()):
+        for i, p in enumerate(opt_params):
             p_hat[p] = ests[i]
 
         p_hat = ParamWrapper(p_hat,self.model)
 
         A_hat, _,_,_ = self.load_model(model=self.model,p=p_hat)
 
-        res = pd.DataFrame({'System':list(self.p.params.values()),
-                            'Lower bound':np.array(list(self.p.params.values()))*self.opts.cnstr_lb_factor,
+        
+        opt_data = {'System':vals,
+                            # 'Lower bound':vals*self.opts.cnstr_lb_factor,
                             'Estimated':ests,
-                            'Upper bound':np.array(list(self.p.params.values()))*self.opts.cnstr_ub_factor,
+                            # 'Upper bound':vals*self.opts.cnstr_ub_factor,
                             'Init guess':thetahat0,
-                            'Deviations':devs},index=list(self.p.params.keys()))
+                            'Deviations':devs}
+    
+        res = pd.DataFrame(opt_data,index=opt_params)
 
         # ------ Print statements ------
         print(f'Finished in: {(t2_-t1_).total_seconds()} s')
