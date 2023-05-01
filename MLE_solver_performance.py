@@ -28,7 +28,7 @@ t1 = -0.00005
 t2 = 0.02
 
 t1 = 0
-t2 = 0.02
+t2 = 0.025
 t = np.arange(t1,t2+dt,dt)
 
 x0 = np.zeros(3)

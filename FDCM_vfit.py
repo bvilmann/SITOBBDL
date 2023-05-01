@@ -791,6 +791,24 @@ def calculate_foster_network(p,r,d,h,verbose=False,plot=True):
     return Z_foster
 
 calculate_foster_network(poles,residues,d,h,verbose=True)
+=======
+
+#%%
+def fourier_method(p,r,t1,t2,dt=1e-6):
+    # inv_fourier_transform = lambda p,r,t: 
+    
+    t = np.arange(t1,t2+dt,dt)
+    y = np.zeros((len(t)))
+
+    fig, ax = plt.subplots(1,1,dpi=200)
+    for i, t_ in enumerate(t):
+        y[i] = np.array([r_*np.exp(p_*t_) for r_, p_ in zip(r,p)]).sum() 
+
+    ax.plot(t,y)   
+    
+    return
+
+fourier_method(poles,residues,0,0.2)
 
 #%% CALCULATED FREQUENCY RESPONSE 
 f_calc = pd.read_csv(f'data\\freq\\cable_1C_freq_calc.txt',header=0,index_col=0)
@@ -821,6 +839,7 @@ mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
 f_fdcm = np.genfromtxt(r'data\freq\Harm_1c_fdcm.out',skip_header=1)
 f = rect_form(f_fdcm[:,1],f_fdcm[:,2])
 s = f_fdcm[:,0]*1j*2*np.pi
+
 # Get fit, poles, residues, d, and h scalars
 mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2,plot_ser=False,plot_err=False)
 fit, SER3, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
