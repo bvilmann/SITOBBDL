@@ -11,7 +11,7 @@ from scipy import linalg
 
 
 def c2d(A,B,dt=10e-6):
-    At = np.block([[A, B], [np.zeros((1, A.shape[1])), np.zeros((1, 1))]])½
+    At = np.block([[A, B], [np.zeros((1, A.shape[1])), np.zeros((1, 1))]])
     eAt = linalg.expm(At * dt)
     Ad = eAt[:A.shape[0], :A.shape[1]]
     Bd = eAt[:A.shape[0], -1:]         

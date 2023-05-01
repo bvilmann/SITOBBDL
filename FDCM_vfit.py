@@ -69,7 +69,7 @@ class Definitions:
         self.rescale = True                     # Rescale option
         self.inc_real = False                   # Increment real initial pole
         self.max_poles = 100                    # Max considered poles
-        self.max_iters = 200                    # Max considered poles
+        self.max_iters = 100                    # Max considered poles
         self.print_optimization_status = True   # Print statement after optimization
         self.err_tol = 1e-6   # Print statement after optimization
         self.plot_ci = True                     # Plot confidence interval band
@@ -202,11 +202,8 @@ class MVF:
     
         A[:, N] = 1
         A[:, N+1] = s
-
         
         return A
-
-
 
     def solve_least_squares(self, A, f):
         b = f
@@ -230,7 +227,7 @@ class MVF:
     def scale_residues(self):
         return
     
-    def GUST_build_A_matrix(self,f,s,poles,N,Ns,cindex,identification_mode,weight):
+    def ULM_build_A_matrix(self,f,s,poles,N,Ns,cindex,identification_mode,weight):
         # use the new poles to extract the residues
         print(weight.shape)
         # Scaling for last row of LS-problem (pole identification)
@@ -341,7 +338,7 @@ class MVF:
 
         return AA, bb, x
     
-    def GUST_calculate_residues(self,f, s, poles, weight):
+    def ULM_calculate_residues(self,f, s, poles, weight):
         Ns = len(s)
         N  = len(poles)
     
@@ -371,7 +368,7 @@ class MVF:
         
         return residues, d, h, reduce_order, x
     
-    def GUST_calculate_poles(self,f,s,poles, weight):
+    def ULM_calculate_poles(self,f,s,poles, weight):
         # Loading variables
         Ns = len(s)
         N = len(poles)
@@ -621,7 +618,7 @@ class MVF:
 
         return poles, residues, d, h, diff, rms_error, x_residues
 
-    def vectfit(self,f,s,weight=None):
+    def vectfit(self,f,s,weight=None,mode=None):
         """
         f = complex data to fit
         s = j*frequency
@@ -638,14 +635,18 @@ class MVF:
             # weight = [1/i for i in range(1,len(s)+1)]
 
         # Optimizing fit
-        poles, residues, d, h, diff, rms_error, x_residues = self.optimize_fit(f, s, weight)
-
-        # Get state equation realization
-        # SER = self.get_state_equation_realization(f,s,poles,x_residues,weight)
-        SER = self.poles_residues_to_state_space(poles,residues)
-
-        # Model the frequency response from poles and residues
-        fit = self.model(s, poles, residues, d, h)
+        if mode=='ULM':                        
+            self.ULM_calculate_poles(f,s,poles,N,Ns,cindex,'poles',weight)
+            
+        else:
+            poles, residues, d, h, diff, rms_error, x_residues = self.optimize_fit(f, s, weight)
+    
+            # Get state equation realization
+            # SER = self.get_state_equation_realization(f,s,poles,x_residues,weight)
+            SER = self.poles_residues_to_state_space(poles,residues)
+    
+            # Model the frequency response from poles and residues
+            fit = self.model(s, poles, residues, d, h)
         
         return fit, SER, (poles, residues, d, h), (diff, rms_error)
     
@@ -742,6 +743,9 @@ class MVF:
             ax[i].axhline(0,color='k',lw=0.75)
             ax[i].set(xlim=(s_f.min(),(xmax,s_f.max())[xmax is None]))
         
+        plt.show()
+        plt.close()
+        
         return
 
 mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2)
@@ -756,8 +760,40 @@ def rect_form(m,p,deg=True):
     
     return z
 
+def calculate_foster_network(p,r,d,h,verbose=False,plot=True):
+    M = len(p)
+    Z_foster = {}    
+    for i in range(M+1):
+        if i == 0:
+            Z_foster[f'R{i}'] = abs(d - sum([rm/pm for rm, pm in zip(r,p)]))            
+            Z_foster[f'L{i}'] = abs(h) 
+        else:
+            Z_foster[f'R{i}'] = abs(r[i-1]/p[i-1])
+            Z_foster[f'L{i}'] = abs(- (r[i-1]/p[i-1] / p[i-1]))            
+    
+    if verbose:
+        for k,v in Z_foster.items():
+            print(f'{k}={v}')        
+    
+    if plot:
+        fig, ax = plt.subplots(2,1,dpi=200,figsize=(8,6))
+        Rs = {k:v for k,v in Z_foster.items() if k[0] == 'R'}
+        Ls = {k:v for k,v in Z_foster.items() if k[0] == 'L'}
+        ax[0].bar(list(Rs.keys()),list(Rs.values()))
+        ax[1].bar(list(Ls.keys()),list(Ls.values()))        
+
+        ax[0].set_xticklabels(list(Rs.keys()), rotation = 90, ha="center")
+        ax[1].set_xticklabels(list(Ls.keys()), rotation = 90, ha="center")
+
+        # for i in range(2):
+        #     ax[i].set(yscale='log')
+    
+    return Z_foster
+
+calculate_foster_network(poles,residues,d,h,verbose=True)
+
 #%% CALCULATED FREQUENCY RESPONSE 
-f_calc = pd.read_csv(f'C:\\Users\\bvilm\\PycharmProjects\\SITOBB\\data\\freq\\cable_1C_freq_calc.txt',header=0,index_col=0)
+f_calc = pd.read_csv(f'data\\freq\\cable_1C_freq_calc.txt',header=0,index_col=0)
 f_calc = f_calc[f_calc.index <= 2e3]
 
 f = f_calc['real'] + f_calc['imag']*1j
@@ -769,7 +805,7 @@ fit, SER, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
 mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
 
 #%% CALCULATED FREQUENCY RESPONSE w ARTIFICIAL ATTENUATION
-f_calc = pd.read_csv(f'C:\\Users\\bvilm\\PycharmProjects\\SITOBB\\data\\freq\\cable_1C_freq_calc.txt',header=0,index_col=0)
+f_calc = pd.read_csv(f'data\\freq\\cable_1C_freq_calc.txt',header=0,index_col=0)
 # f_calc = f_calc[f_calc.index <= 2e3]
 
 f = f_calc['real'] + f_calc['imag']*1j
@@ -778,493 +814,168 @@ s = f_calc.index.values*1j*2*np.pi
 
 # Get fit, poles, residues, d, and h scalars
 mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2,plot_ser=False,plot_err=False)
-fit, SER, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
+fit, SER2, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
 mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
 
 #%%
-f_fdcm = np.genfromtxt(r'C:\Users\bvilm\PycharmProjects\SITOBB\data\freq\Harm_1c_fdcm.out',skip_header=1)
+f_fdcm = np.genfromtxt(r'data\freq\Harm_1c_fdcm.out',skip_header=1)
 f = rect_form(f_fdcm[:,1],f_fdcm[:,2])
 s = f_fdcm[:,0]*1j*2*np.pi
 # Get fit, poles, residues, d, and h scalars
 mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2,plot_ser=False,plot_err=False)
-fit, SER, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
+fit, SER3, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
 mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
 
+Z_f = calculate_foster_network(poles,residues,d,h,verbose=True)
+
 #%%
-f_fdcm = np.genfromtxt(r'C:\Users\bvilm\PycharmProjects\SITOBB\data\freq\Harm_1c_pi.out',skip_header=1)
+f_fdcm = np.genfromtxt(r'data\freq\Harm_1c_pi.out',skip_header=1)
 f = rect_form(f_fdcm[:,1],f_fdcm[:,2])
 s = f_fdcm[:,0]*1j*2*np.pi
 
 # Get fit, poles, residues, d, and h scalars
 mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2,plot_ser=False,plot_err=False)
-fit, SER, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
+fit, SER4, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
+mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
+
+Z_f = calculate_foster_network(poles,residues,d,h,verbose=True)
+
+#%% 3 CONDUCTORS
+f_fdcm = np.genfromtxt(r'data\cable_3c\Harm_3c.out',skip_header=1)
+
+#%%
+import re
+
+df = pd.read_csv(r'data\cable_3c\Harm_3c.out',delimiter='\t')
+n_phases = 3
+n_freqs = int(len(df)/n_phases)
+
+print(df)
+
+Z = np.zeros((n_phases,n_phases,n_freqs),dtype=np.complex128)
+f = np.zeros((n_freqs))
+for i in range(0,n_phases*n_freqs-n_phases+1,3):
+    k = int(i/3)
+    for j in range(n_phases):
+        line = df.loc[i + j].values[0].strip()
+        numbers = re.findall(r'-?\d+(?:\.\d+)?(?:[Ee][+\-]?\d+)?', line)
+        numbers = [float(num) for num in numbers]
+        # print(numbers)
+        print(i,j,k,len(numbers),numbers)
+
+        if j == 0:
+            f[k] = numbers[0]
+            Z[j,j,k] = complex(numbers[1],numbers[2])
+        else:
+            # Mutual impedance
+            for j_ in range(j):
+                Z[j,j_,k] = Z[j_,j,k] = complex(numbers[j_],numbers[j_+1])
+
+            # Mutual impedance
+            Z[j,j,k] = complex(numbers[-2],numbers[-1])
+
+    print(Z[:,:,k])
+
+# Put inside data frame
+data = {}
+for i in range(n_phases):
+    for j in range(n_phases):
+        data[f'Z{i+1}{j+1}'] = Z[i,j,:]
+    
+df = pd.DataFrame(data,index=f)
+
+#%%
+f = rect_form(f_fdcm[:,1],f_fdcm[:,2])
+s = f_fdcm[:,0]*1j*2*np.pi
+
+# Get fit, poles, residues, d, and h scalars
+mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2,plot_ser=False,plot_err=False)
+fit, SER4, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
 mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
 
 #%%
-# Plot test data
+from sympy import Matrix
+
+m = Matrix(SER.A)
+
+#%%
+P, J = m.jordan_form()
 
 
 #%%
-"""
-THIS IT
-
-"""
-import pandas as pd
+import pickle # https://www.digitalocean.com/community/tutorials/python-pickle-example
+from sympy import Matrix
+import copy
 
 class HCA:
     
-    def __init__(self,**kwargs):
-        self.opts = HCA_Definitions(**kwargs)
-        
-        return
-    
-    def load_cable_data(self,path, file,n_conductors):
-        n = n_conductors
-        fpath = f'{path}\\{file}.out'
-
-        conv = {0: lambda x: str(x)}
-
-        # df = pd.read_csv(fpath, skiprows=59,nrows=n,converters=conv)
-        with open(fpath,'r') as f:
-            for i, line in enumerate(f):
-                cnt = 0
-                if 'SERIES IMPEDANCE MATRIX (Z)' in line:
-                    # print(f'line: {i}')
-                    zline = i + 1 + 1
-                    # z = np.loadtxt(fpath,skiprows=i+1,max_rows=7,converters=conv,delimiter=',')
-                elif 'SHUNT ADMITTANCE MATRIX (Y)' in line:
-                    yline = i + 1 + 1
-                    # y = np.genfromtxt(fpath,skip_header=i+1,max_rows=7,autostrip=True)            
-        f.close()
-
-        Z = np.zeros((n,n),dtype=np.complex128)
-        Y = np.zeros((n,n),dtype=np.complex128)
-        for i in range(n):
-            z_i = linecache.getline(fpath, zline).strip().split(' '*3)
-            y_i = linecache.getline(fpath, yline).strip().split(' '*3)
-            
-            Z[i,:] = [complex(float(x.split(',')[0]),float(x.split(',')[1])) for x in z_i]
-            Y[i,:] = [complex(float(x.split(',')[0]),float(x.split(',')[1])) for x in y_i]
-        
-        return Z, Y
-    
-    def rect_map(self,mod,arg):
-        
-        z = mod*(np.cos(arg*np.pi/180)+1j*np.sin(arg*np.pi/180))
-        
-        return z
-    
-    def ULM_propagation_matrix(self,path,file):
-        
-        files = ['hmp','hpp']
-        self.hm = hm = np.genfromtxt(f'{path}\\{file}_hmp.out',skip_header=1)            
-        self.hp = hp = np.genfromtxt(f'{path}\\{file}_hpp.out',skip_header=1)            
-
-        self.s = s = hm[:,1]*1j            
-
-        # Select only calculated values
-        self.hm = hm = hm[:,2:][:,0::2]            
-        self.hp = hp = hp[:,2:][:,0::2]            
-        
-        self.H = H = self.rect_map(hm,hp)
-
-        f = H
-        mvf = MVF(n_poles=hm.shape[1])        
-        fit, SER, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
-
-        mvf.plot(f,s,fit)
-        
-        return
-        
-    def ULM_char_admittance_matrix(self,path,file):
-        
-        files = ['ycmp','ycpp']
-        
-        fpath = f'{path}\\{file}'
-        
-        return
-    
-    def fit_propagation_matrix(self,Z,Y,L):
-        # FDCM approach
-        if self.opts.mode.upper() == 'FDCM':
-
-            # Step 1) The modal decomposition given by (5) is performed.
-            G, H, Hm, T, lambd, D = self.do_modal_decomposition(Z, Y, L)
-    
-            # Step 2) Calculate time delays
-            self.tau = tau = self.calc_time_delays(lambd)
-    
-            # Step 3) Group eigenvalues #TODO: Revise grouping of eigenvalue together with time delay
-            self.grouped_eigenvalues = grouped_eigenvalues = self.group_eigenvalues(H,tau)
-    
-            # Step 4) The modal decomposition given by (5) is performed.
-    
-            # Step 5) Evaluate fitting error
-        elif self.opts.mode.upper() == 'ULM':
-            pass
-        else:
-            raise ValueError('Fitting method HCA.opts.mode must be "FDCM" or "ULM".')
-        
-        return
-    
-    def fit_char_admittance_matrix(self,Z,Y):
-                
-        
-        return
-    
-    
-    def do_modal_decomposition(self,Z,Y,L):
-        """
-        Step 1) The modal decomposition given by (5) is performed.
-        """
-        # Initialization
-        s = 1j*np.linspace(self.opts.f_min,self.opts.f_max,self.opts.Ns)        
-        N = Z.shape[0]
-
-        # Calculate the propagation matrix
-        G = sqrt(Y@Z)           # Gamma
-        H = expm(G*L)           # Propagation matrix
-        
-        # Get the eigenvalues e^lambda_i
-        Hm = diag(eigvals(H))
-        
-        # Transformation matrix
-        # T = eig(Y@Z)[1]
-        # T1 = eig(H)[1]
-        
-        # Get the eigenvalues, lambda_i
-        lambd = eigvals(-sqrt(Y@Z)*L)
-        lambd, T = eig(-sqrt(Y@Z)*L) # TODO: Figure out the correct T
-        
-        P = T @ inv(T).T
-        
-        plt.imshow(P.real);plt.show();plt.close()
-        plt.imshow(P.imag);plt.show();plt.close()
-        plt.imshow(abs(P));plt.show();plt.close();
-        
-        print(lambd)
-        
-        # Calculate the matrix D_i
-        # "where D is a matrix obtained by premultiplying the ith column of T by the ith row of T^-1."
-        D = np.zeros((N,N,N),dtype=np.complex128)
-        for i in range(N):
-            D[:,:,i] = T[:,i] @ inv(T).T[i,:]*exp(lambd[i])
-            # D[:,:,i] = T[:,i] @ inv(T).T[i,:] 
-            # D[:,:,i] = inv(T)[:,i] @ T[i,:]
-            # D[:,:,i] = H / Hm[i]
-            # D[:,:,i] = (T @ inv(T))[i,:] @ (T @ inv(T))[:,i]
-                
-        # print(D)
-        # Error propagation
-        error = norm(H - T @ Hm @ inv(T))
-        print('Error: ',error)
-
-        # Create propogation matrix H from D
-        H_from_D = np.zeros_like(H)
-        for i in range(N):
-            H_from_D += D[:,:,i]*exp(lambd[i])
-        error = norm(H - H_from_D)
-        print('H: ',H)
-        print('H_from_D: ',H_from_D)
-        print('Error: ',error)
-
-        # Create propogation matrix H from D w.r.t. frequency s
-        H_from_D = np.zeros((*H.shape,self.opts.Ns),dtype=np.complex128)
-        print(H_from_D.shape)
-        for i in range(N):
-            for j in range(len(s)):
-                H_from_D[:,:,j] += D[:,:,i]*exp(lambd[i])*exp(-s[j]*lambd.imag[i])
-
-        print()
-
-
-
-        error = norm(H - H_from_D[:,:,50])
-        print('Error: ',error)
-            
-        return G, H, Hm, T, lambd, D
-        
-    def calc_time_delays(self,lambd):
-        """
-        Step 2) Time delays associated with modal propagation
-        functions are initially estimated by applying Bode's
-        magnitude-phase relation that holds for minimum-
-        phase systems (MPSs) [11].
-        """
-        
-        tau = abs(lambd.imag)
-        
-        print('time delays: ', tau)
-
-        return tau
-        
-        
-    def group_eigenvalues(self, H, tau):
-        """
-        Step 3) Similar eigenvalues of $H$ and their eigenvectors are 
-        grouped by summing them, and a single time delay
-        is assigned to the group. This can be interpreted as 
-        reducing the rank of H. The new modal contributions
-        become smooth functions of frequency. Equation (8) 
-        becomes --- 
-        
-        $H=\Sum_{i=1}^{Nr}$\hat{H}_{i}\exp^{-s\tau_{i}}
-        
-        where is Nr the number of modal contribution
-        groups corresponding to the reduced rank of H.
-        --------------------------------------------------------        
-        Groups similar eigenvalues of matrix H and their eigenvectors by summing them,
-        and assigns a single time delay to the group.
-    
-        Parameters:
-        H (numpy.ndarray): A square matrix.
-        epsilon (float): A threshold value for grouping eigenvalues.
-        tau (float): A single time delay to assign to the grouped eigenvalues.
-    
-        Returns:
-        grouped_eigenvalues (list): A list of tuples, each containing the eigenvalue, eigenvector sum, and time delay of a group.
-        """
-        eigenvalues, eigenvectors = np.linalg.eig(H)
-        sorted_indices = np.argsort(eigenvalues)
-    
-        # Initialize the first group with the first eigenvalue and eigenvector
-        current_eigenvalue = eigenvalues[sorted_indices[0]]
-        current_eigenvector_sum = eigenvectors[:, sorted_indices[0]]
-        current_tau = tau
-        grouped_eigenvalues = []
-    
-        # Iterate over the rest of the eigenvalues and group them as necessary
-        for i in range(1, len(eigenvalues)):
-            if abs(eigenvalues[sorted_indices[i]] - current_eigenvalue) < self.opts.err_tol:
-                # Add the current eigenvector to the current group
-                current_eigenvector_sum += eigenvectors[:, sorted_indices[i]]
-            else:
-                # Add the current group to the list of grouped eigenvalues and start a new group
-                grouped_eigenvalues.append((current_eigenvalue, current_eigenvector_sum, current_tau))
-                current_eigenvalue = eigenvalues[sorted_indices[i]]
-                current_eigenvector_sum = eigenvectors[:, sorted_indices[i]]
-                current_tau = tau
-    
-        # Add the last group to the list of grouped eigenvalues
-        grouped_eigenvalues.append((current_eigenvalue, current_eigenvector_sum, current_tau))
-    
-        print(grouped_eigenvalues)
-    
-        return grouped_eigenvalues
-
-    def evaluate_fitting_error(self):
-        """
-        Step 5) If the fitting error in Step 4 is over the specified
-        limit, the initial delays are slightly adjusted through
-        a search process that tunes delays together with the
-        poles and residues of the rational approximation.
-        This usually allows for further minimizing the fitting
-        error.
-        """
-        
-        return
-        
-    def evaluate_fitting_error(self):
-        """
-        Step 5) If the fitting error in Step 4 is over the specified
-        limit, the initial delays are slightly adjusted through
-        a search process that tunes delays together with the
-        poles and residues of the rational approximation.
-        This usually allows for further minimizing the fitting
-        error.
-        """
-        
-        return
-    
-    
-    def fit_cable(self,path,file,n_conductors,L):
-        
-        if self.opts.mode =='ULM':
-            # 
-            self.ULM_propagation_matrix(path, file)
-
-            self.ULM_char_admittance_matrix(path, file)
-
-        elif self.opts.mode == 'FDCM':
-            # load cable
-            Z, Y = self.load_cable_data(path,file,n_conductors)        
-            
-            # Fit propagation matrix
-            self.fit_propagation_matrix(Z,Y,L)
-    
-            # Fit admittance matrix
-            self.fit_char_admittance_matrix(Z,Y)
+    def __init__(self):
+        self.data = []
         
         return
 
-path = r'C:\Users\BENVI\Documents\validation\PSCAD\DTU projects\HCA\cable_test.if15_x86'
-file = r'Cable_2'
-n_conductors = 7
-length = 90e3 # meter
+    def css2rss(self,SER):
+        SER_real = copy.deepcopy(SER)
+        
+        for elm in ['A','B','C','D']:
+            real_matrix = np.vstack((np.hstack((getattr(SER,elm).real, -getattr(SER,elm).imag)),
+                           np.hstack((getattr(SER,elm).imag, getattr(SER,elm).real))))
+            setattr(SER_real,elm, real_matrix)
 
-# HCA
-hca = HCA()
-hca.fit_cable(path,file,n_conductors,length)
-
-
-#%%
-"""
-Step 0) Load data
-
-"""
-
-# np.genfromtxt(,skip_row=58,max_rows=7)
-fpath = f'{path}\\{file}'
-N = 7
-L = 90e3
-
-conv = {0:lambda x: complex(*[a for a in str(x).replace("b'",'').replace("'","").split()])}
-conv = {0:lambda x: complex(*[a for a in str(x).replace("b'",'').replace("'","").split()])}
-conv = {0: lambda x: str(x)}
-
-df = pd.read_csv(fpath, skiprows=59,nrows=n,converters=conv)
-
-with open(fpath,'r') as f:
-    for i, line in enumerate(f):
-        cnt = 0
-        if 'SERIES IMPEDANCE MATRIX (Z)' in line:
-            print(f'line: {i}')
-            zline = i + 1 + 1
-            # z = np.loadtxt(fpath,skiprows=i+1,max_rows=7,converters=conv,delimiter=',')
-        elif 'SHUNT ADMITTANCE MATRIX (Y)' in line:
-            yline = i + 1 + 1
-            # y = np.genfromtxt(fpath,skip_header=i+1,max_rows=7,autostrip=True)            
-f.close()
-
-
-Z = np.zeros((n,n),dtype=np.complex128)
-Y = np.zeros((n,n),dtype=np.complex128)
-for i in range(n):
-    z_i = linecache.getline(fpath, zline).strip().split(' '*3)
-    y_i = linecache.getline(fpath, yline).strip().split(' '*3)
+        
+        return SER_real
     
-    Z[i,:] = [complex(float(x.split(',')[0]),float(x.split(',')[1])) for x in z_i]
-    Y[i,:] = [complex(float(x.split(',')[0]),float(x.split(',')[1])) for x in y_i]
-
-
-
-#%%
-"""
-Step 1) The modal decomposition given by (5) is performed.
-"""
-# Calculate the propagation matrix
-G = sqrt(Y@Z)       # Gamma
-H = expm(G*L)        # Propagation matrix
-
-# Get the eigenvalues e^lambda_i
-Hm = diag(eigvals(H))
-
-# Transformation matrix
-T = eig(Y@Z)[1]
-# T = eig(H)[1]
-
-# Get the eigenvalues, lambda_i
-lambd = eigvals(-sqrt(Y@Z)*L)
-
-# Calculate the matrix D_i TODO: UNSUCCESFUL
-D = np.zeros((N,N,N),dtype=np.complex128)
-for i in range(N):
-    D[:,:,i] = T[:,i] @ inv(T)[i,]
-    # D[:,:,i] = inv(T)[:,i] @ T[i,:]
-    # D[:,:,i] = H / Hm[i]
-    # D[:,:,i] = (T @ inv(T))[i,:] @ (T @ inv(T))[:,i]
-
-print(D)
-
-# Error propagation
-# error = norm(H - T @ Hm @ inv(T))
-# print('Error: ',error)
-
-#%%
-"""
-Step 2) Time delays associated with modal propagation
-functions are initially estimated by applying Bode's
-magnitude-phase relation that holds for minimum-
-phase systems (MPSs) [11].
-"""
-
-tau = lambd.imag
-
-print('time delays: ', tau)
-# tau = 1/abs(lambd)
-# wn = -lambd.real/lambd
-
-#%%
-"""
-Step 3) Similar eigenvalues of and their eigenvectors are 
-grouped by summing them, and a single time delay
-is assigned to the group. This can be interpreted as 
-reducing the rank of H. The new modal contributions
-become smooth functions of frequency. Equation (8) 
-becomes --- where is Nr the number of modal contribution
-groups corresponding to the reduced rank of H.
-"""
-def group_time_constants(time_constants, threshold):
-    """
-    Groups similar time constants into a dictionary with lists of the index of the time constant as the value.
+    def pickle(self,SER,
+              cable:str=None,
+              idx:tuple=None):
+        
+        
+        
+        SER_real = self.css2rss(SER)
+        
+        
+        pickle_data = {'SER':SER,
+                       'A':SER_real.A,
+                       'B':SER_real.B,
+                       'C':SER_real.C,
+                       'D':SER_real.D,
+                       'cable':cable,
+                       'idx':idx
+                       }
+        
+        self.data.append(pickle_data)        
+        
+        return
     
-    Parameters:
-    - time_constants: a list of time constants to group
-    - threshold: a threshold value for similarity between time constants
+    def store_pickles(self,path,file):
+        filepath = f'{path}\\{file}.dat'
+        # open a file, where you ant to store the data
+        file = open(filepath, 'wb')
+        
+        # dump information to that file
+        pickle.dump(self.data, file)
+        
+        # close the file
+        file.close()        
     
-    Returns:
-    - a dictionary where the keys are the rounded time constants and the values are lists of the index of the time constant
-    """
-    time_constant_dict = {}
-    
-    for i, T in enumerate(time_constants):
-        rounded_T = round(T, 2)  # round to two decimal places to group similar time constants
-        for key in time_constant_dict.keys():
-            if abs(key - rounded_T) < threshold:
-                # add the index of the time constant to the existing list of indices for the rounded time constant
-                time_constant_dict[key].append(i)
-                break
-        else:
-            # no similar time constant was found, create a new entry in the dictionary
-            time_constant_dict[rounded_T] = [i]
-    
-    return time_constant_dict
+        return
+        
+    def load_pickles(self,path,file):
+        filepath = f'{path}\\{file}.dat'
 
-grps = group_time_constants(tau, 1e-2)
+        # open a file, where you ant to store the data
+        file = open(filepath, 'rb')
+        
+        # dump information to that file
+        data = pickle.load(file)
+        
+        # close the file
+        file.close()        
+        
+        return
+        
 
-print(grps)
-
-#%%
-"""
-Step 4) The fitting is performed on each modal contribution
-group to obtain poles and residues of simultaneously.
-The exponential time delay factor is removed
-from the modal contributions prior to fitting
-
-It is underlined here that a common set of poles is
-used for each modal contribution
-"""
-
-
-
-#%%
-"""
-Step 5) If the fitting error in Step 4 is over the specified
-limit, the initial delays are slightly adjusted through
-a search process that tunes delays together with the
-poles and residues of the rational approximation.
-This usually allows for further minimizing the fitting
-error.
-"""
-
-
-#%%
-# Participation matrix
-plt.imshow(np.where(abs(T @ inv(T).T) > 0.2,abs(T @ inv(T).T),np.nan))
-
-
-
-
+        
 
 
 
