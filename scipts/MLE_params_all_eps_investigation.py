@@ -42,7 +42,7 @@ R1=np.diag(r123)*1e3
 R2=np.diag(r123)*1e1
 
 
-thetahat0 = 1e-12
+thetahat0 = 1e-4
 
 # Initial parameters
 params= {'Rin':0.5,'V':1,'Vbase':66e3,'Rload': 100,'phi':np.pi/4}
@@ -65,6 +65,7 @@ epsilons.sort()
 
 print(epsilons)
 opt_params  = ['R','Rin','Rload']
+opt_params  = ['R','Rin','Rload','L','C']
 n = len(opt_params)
 
 errs = np.zeros((n,len(epsilons)))
@@ -94,8 +95,8 @@ for i, eps in enumerate(epsilons):
         
     # Create input
     u, uk = m.create_input(t1, t2, dt,mode='sin')        
-    Sx = m.create_noise(t1, t2, dt,amp=.01,dim=3,seed=1234)*0         
-    Sx = None         
+    Sx = m.create_noise(t1, t2, dt,amp=.01,dim=3,seed=1234)*1        
+    # Sx = None         
     
     # Get matrices
     Ad, Bd, A, B, C, D = m.A_d,m.B_d,m.A,m.B,m.C,m.D

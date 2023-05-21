@@ -28,7 +28,6 @@ test_poles = [
     -3000+35000j, -3000-35000j,
 ]
 
-
 # As are the associated resdiues
 test_residues = [
     -3000,

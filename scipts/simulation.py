@@ -34,7 +34,6 @@ t = np.arange(t1,t2+dt,dt)
 
 # Initial conditions
 x0 = np.zeros(n)
-# x0 = np.array([-0.0104619 , -0.00789252, -0.00771146])
 
 # Covariance
 r123 = np.ones(n)*1e-4
@@ -74,29 +73,22 @@ opts = {'method':'SLSQP',
         }
 
 opts = {'jac':'2-point',
-        # 'epsilon':1e-5,
-        'method':'L-BFGS-B'
-        # 'method':'BFGS'
-        }
-
+        'epsilon':1e-5,
+        'method':'BFGS'}
 # # opts = {'method':'BFGS'}
 # opts = {'method':'BFGS',
 #         'epsilon':1e-6,
 #         # 'jac':'2-point',
 #         }
 
-
-
 #%%
-model = f'c1_s0_o3_load' # f'c1_s0_o3_load'
-params= {'Rin':0.5,'V':1,'Vbase':66e3,'Rload': 100,'phi':np.pi/4*0}
+params= {'Rin':0.5,'V':1,'Vbase':66e3,'Rload': 200,'phi':np.pi/4*0}
 m = SITOBBDS(opts=opts)
-m.get_model(model,discretize=True,dt=10e-6,params=params,pu=True)
+m.get_model(f'c1_s0_o3_load',discretize=True,dt=10e-6,params=params,pu=True)
     
 # Create input
 u, uk = m.create_input(t1, t2, dt,mode='sin')        
 Sx = m.create_noise(t1, t2, dt,amp=.01,dim=n,seed=1234)
-# Sy = m.create_noise(t1, t2, dt,amp=.01,dim=n,seed=1235)
 # Sx = None         
 
 # Get matrices
@@ -107,46 +99,4 @@ Ad, Bd, A, B, C, D = m.A_d,m.B_d,m.A,m.B,m.C,m.D
 x, y = m.simulate(Ad,Bd,C,D,x0,uk,t1,t2,dt,Sx=Sx)
 
 m.plot_simulations(t, [y],labels=['$y$'])
-
-
-
-
-#%%
-# Identification of the parameter space
-# opt_params  = ['R','Rin','Rload']
-# opt_params  = ['Rload']
-opt_params  = ['R','Rin','Rload','L','C']
-# opt_params  = ['R','Rload','L','C']
-# opt_params  = ['L','C']
-# opt_params  = ['Rload']
-# thetahat0 = [m.p.params[k] for k in opt_params]
-thetahat0 = [1e-4 for k in opt_params]
-# thetahat0 = None
-
-ests, thetahat, res, A_hat = m.ML_opt_param(opt_params,A,B,C,D,x0, uk, y, R0, R1, R2, t1, t2, dt, thetahat0=thetahat0,log=True)
-
-name = "_".join(opt_params)
-df = pd.DataFrame({name:ests},index=opt_params)
-
-w_path = r'C:\Users\bvilm\PycharmProjects\SITOBB\data\estimation results'
-df.to_excel(f'{w_path}\\MLE_1c_all_params_{name}.xlsx',header=True,index=True)
-
-#%%
-params.update(dict(res['Estimated']*m.p.Zbase))
-m = SITOBBDS()
-m.get_model(model,discretize=True,dt=10e-6,params=params,pu=True)
-    
-# Create input
-u, uk = m.create_input(t1, t2, dt,mode='sin')        
-
-# Get matrices
-Ad, Bd, A, B, C, D = m.A_d,m.B_d,m.A,m.B,m.C,m.D
-
-# Simulate the system
-_, y1 = m.simulate(Ad,Bd,C,D,x0,uk,t1,t2,dt)
-
-m.plot_simulations(t, [y,y1],labels=['$y$','$y1$'])
-
-
-
 
