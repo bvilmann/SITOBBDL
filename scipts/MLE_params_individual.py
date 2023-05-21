@@ -31,6 +31,7 @@ t2 = 0.02
 t = np.arange(t1,t2+dt,dt)
 
 x0 = np.zeros(3)
+x0 = np.array([-0.0104619 , -0.00789252, -0.00771146])
 
 # Noise
 Nx = np.array([1e-7,1e-4,1e-4])*0

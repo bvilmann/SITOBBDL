@@ -52,7 +52,7 @@ class ParamWrapper:
 
 
         # ------ Load model default parameters ------
-        if model in ['c1_s0_o3','c1_s0_o3_load','c1_s0_o2']:
+        if model in ['c1_s0_o3','c1_s0_o3_load','c1_s0_o2','c1_s0_o2_load']:
             self.params = ['Rin','Rload','R','L','C1','C2']
             self.params = ['Rin','Rload','R','L','C']
             self.R = 1

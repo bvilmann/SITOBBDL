@@ -16,17 +16,22 @@ from matplotlib.colors import LogNorm
 from matplotlib import cm
 import linecache
 
+# Control systems
+from control import obsv
+
 # Default 
 plt.rcParams.update({'lines.markeredgewidth': 1})
 plt.rcParams.update({'font.size':18})
 # plt.rcParams['text.usetex'] = False
-plt.rcParams['text.usetex'] = True
+plt.rcParams['text.usetex'] = False
 plt.rcParams['text.latex.preamble'] = r"\usepackage{bm} \usepackage{amsmath} \usepackage{amssymb}"
 prop_cycle = plt.rcParams['axes.prop_cycle']
 clrs = prop_cycle.by_key()['color']
 
 #
 # from scipy.stats import norm
+# Other packages
+from tqdm import tqdm
 import SITOBBDS_utils as utils
 from numerical_methods import NumericalMethods
 import datetime
@@ -66,16 +71,27 @@ class ParamWrapper:
         self.omega = 2*np.pi*self.f
         self.phi = 0
 
+        designed_models = ['c1_s0_o3','c1_s0_o3_load','c1_s0_o2','c1_s0_o2_load','c1_s0_o2_ZY','c1_s0_o3_load1','c1_s0_o3_load2','c1_s0_pde_load']
+
+        
+        alpha = np.exp(2/3*np.pi*1j)
+
+        self.T_seq = np.array([[1, 1,           1],
+                               [1, alpha**2,    alpha],
+                               [1, alpha,       alpha**2]])
+
+
 
         # ------ Load model default parameters ------
-        if model in ['c1_s0_o3','c1_s0_o3_load','c1_s0_o2','c1_s0_o2_ZY']:
-            self.params = ['Rin','Rload','R','L','C1','C2']
+        if model in designed_models:
             self.params = ['Rin','Rload','R','L','C']
+            #self.params = ['Rin','Rload','R','L','C1','C2']
             self.R = 1
             self.Rin = 0.05 # BRK = 0.05
             self.Rload = 100 # BRK = 0.05
             self.L = 1e-3
             self.C = 0.5e-6
+            self.G = 0.5e-6
             self.C1 = self.C
             self.C2 = self.C
             
@@ -94,45 +110,53 @@ class ParamWrapper:
             self.Zbase = self.Vbase**2 / self.Sbase           
     
             # Adjusting 
-            for k in self.params:
-                setattr(self, k, getattr(self, k)/self.Zbase)
+            if model in designed_models:
+                for k in self.params:
+                    setattr(self, k, getattr(self, k)/self.Zbase)
 
         # ------ Converting param list into dict ------
         #
-        data = {}
-        for p in self.params:
-            data[p] = getattr(self, p)
-        self.params = data
-
+        if model in designed_models:
+            data = {}
+            for p in self.params:
+                data[p] = getattr(self, p)
+            self.params = data
         return
 
-    # def exp(self):
-    #     # Adjusting 
-    #     for k in self.params.keys():
-    #         setattr(self.params, k, np.exp(getattr(self, k)))
-        
     
-    def load_cable_data(self,path, file,n_conductors):
+    def load_cable_data(self,path, file, n_conductors, mode: int = 0):
         n = n_conductors
         fpath = f'{path}\\{file}.out'
+        
+        select_mode = ['LONG-LINE CORRECTED ',
+                  'SEQUENCE ',
+                  ''][mode]
+
+        z_searchword = f'{select_mode}SERIES IMPEDANCE MATRIX'.replace(('','SERIES ')[select_mode == 'SEQUENCE '],'')
+        y_searchword = f'{select_mode}SHUNT ADMITTANCE MATRIX'.replace(('','SHUNT ')[select_mode == 'SEQUENCE '],'')
 
         conv = {0: lambda x: str(x)}
 
         # df = pd.read_csv(fpath, skiprows=59,nrows=n,converters=conv)
+        Z = np.zeros((n,n),dtype=np.complex128)
+        Y = np.zeros((n,n),dtype=np.complex128)
+
+        print(z_searchword,y_searchword)
+
         with open(fpath,'r') as f:
             for i, line in enumerate(f):
                 cnt = 0
-                if 'SERIES IMPEDANCE MATRIX (Z)' in line:
+                # if 'SERIES IMPEDANCE MATRIX (Z)' in line:
+                if z_searchword in line:
                     # print(f'line: {i}')
                     zline = i + 1 + 1
                     # z = np.loadtxt(fpath,skiprows=i+1,max_rows=7,converters=conv,delimiter=',')
-                elif 'SHUNT ADMITTANCE MATRIX (Y)' in line:
+                # elif 'SHUNT ADMITTANCE MATRIX (Y)' in line:
+                elif y_searchword in line:
                     yline = i + 1 + 1
                     # y = np.genfromtxt(fpath,skip_header=i+1,max_rows=7,autostrip=True)            
         f.close()
 
-        Z = np.zeros((n,n),dtype=np.complex128)
-        Y = np.zeros((n,n),dtype=np.complex128)
         for i in range(n):
             z_i = linecache.getline(fpath, zline).strip().split(' '*3)
             y_i = linecache.getline(fpath, yline).strip().split(' '*3)
@@ -140,6 +164,18 @@ class ParamWrapper:
             Z[i,:] = [complex(float(x.split(',')[0]),float(x.split(',')[1])) for x in z_i]
             Y[i,:] = [complex(float(x.split(',')[0]),float(x.split(',')[1])) for x in y_i]
 
+            zline += 1
+            yline += 1
+
+        if select_mode != 'SEQUENCE ':
+            self.Z_ph = Z
+            self.Y_ph = Y
+            self.z_ph = Z/self.Zbase
+            self.y_ph = Y/self.Zbase
+            self.Z_seq = inv(self.T_seq) @ Z @ self.T_seq
+            self.Y_seq = inv(self.T_seq) @ Y @ self.T_seq
+
+        return Z,Y
 
 class OptionWrapper:
     
@@ -190,6 +226,8 @@ class SITOBBDS:
         elif isinstance(model,str) and model == 'c1_s0_o3':
             # ------ Single core, no screen, 3rd order ------ 
             self.n = n = 3
+            p.C1 = p.C2 = p.C
+
             A = np.array([[-p.R/p.L, 1/p.L, -1/p.L],
                             [-1/(p.C1), -1/(p.Rin * p.C1), 0],
                             [1/(p.C2), 0, 0],
@@ -202,16 +240,51 @@ class SITOBBDS:
         elif isinstance(model,str) and model == 'c1_s0_o3_load':
             # ------ Single core, no screen, 3rd order ------             
             self.n = n = 3
-            A = np.array([[-p.R/p.L, 1/p.L, -1/p.L],
-                            [-1/(p.C1), -1/(p.Rin * p.C1), 0],
-                            [1/(p.C2), 0, -1/(p.Rload*p.C2)],
+            p.C1 = p.C2 = p.C
+
+            A = np.array([
+                            [-1/(p.Rin * p.C1), -1/(p.C1), 0],
+                            [1/p.L, -p.R/p.L, -1/p.L],
+                            [0, 1/(p.C2), -1/(p.Rload*p.C2)],
                           ])
             
-            B = np.array([[0], [1 / (p.Rin * p.C1)], [0]])
+            B = np.array([[1 / (p.Rin * p.C1)], [0], [0]])
             C = np.eye(n)
             D = np.zeros(1)
+            
+        elif isinstance(model,str) and model == 'c1_s0_pde_load':
+            # ------ Single core, no screen, 3rd order ------             
+            self.n = n = 5
+            p.C1 = p.C2 = p.C
+            C1, C2, C3 = p.C1/2, p.C1, p.C1/2
+            L1 = L2 = p.L/2
+            R1 = R2 = p.R/2
+            a11 = -1/(p.Rin * C1)
+            a12 = -1/(C1)
+            a21 = 1/L1
+            a22 = -R1/L1  
+            a23 = -1/L1
+            a32 = 1/(C2)
+            a34 = -1/(C2)
+            a43 = 1/L2
+            a44 = -R2/L2
+            a45 = -1/L2
+            a54 = 1/(C3)
+            a55 = -1/(p.Rload*C3)
+            A = np.array([
+                            [a11,   a12,    0,      0,      0],
+                            [a21,   a22,    a23,    0,      0],
+                            [0,     a32,    0,      a34,    0],
+                            [0,     0,      a43,    a44,    a45],
+                            [0,     0,      0,      a54,    a55],                            
+                          ])
+            
+            B = np.array([[1 / (p.Rin * C1)], [0], [0], [0], [0]])
+            C = np.eye(n)
+            D = np.zeros(1)            
 
-        elif isinstance(model,str) and model == 'c1_s0_o2_ZY':
+
+        elif isinstance(model,str) and model == 'c1_s0_o3_ZY':
             # ------ Single core, no screen, 2nd order, two-port-network ------             
             self.n = n = 8
             zs = p.R + 1j*p.omega*p.L
@@ -264,9 +337,22 @@ class SITOBBDS:
 
             C = np.eye(n)
             D = np.zeros(1)
-        else :
-            self.n = n = self.p.n
-            A = self
+        elif isinstance(model,str) and model == 'c1_s0_o2_load':
+            # ------ Single core, no screen, 2rd order ------ 
+            self.n = n = 2
+            A = np.array([[-p.R/p.L,-1/(p.L)],
+                          [1/(p.C2),-1/(p.Rload*p.C2)]])
+            B = np.array([[1/p.L],[0]])
+
+            C = np.eye(n)
+            D = np.zeros(1)
+
+        else:
+            import os
+            path = os.path.abspath(os.path.join(os.getcwd(), os.pardir)) + r'\data'
+            self.n = n = 3
+            self.p.load_cable_data(path, model, n)
+                        
             C = np.eye(n)
             D = np.zeros(1)
 
@@ -330,6 +416,47 @@ class SITOBBDS:
         
         return
     
+    
+    def check_observability(self,A,C):
+
+        # # Filter C for zero-rows
+        # # Find rows that are not all zeros
+        # non_zero_rows = ~np.all(C == 0, axis=1)
+        # # Select only those rows
+        # C_ = C[non_zero_rows]        
+        # n = A.shape[0] # number of states
+        # m = (C_ @ A).shape[0]
+    
+        # O = np.zeros((m*n,n))
+        # for i in range(n):
+        #     O[i*m:i*m+m,:] = C_ @ (A)**i
+        
+        # O = obsv(A, C)
+
+        O = np.vstack([np.dot(np.linalg.matrix_power(A, i), C.T) for i in range(A.shape[0])])
+
+        # Compute its rank
+        rank = np.linalg.matrix_rank(O)
+        
+        # Compute the eigenvalues of the system
+        eigvals, _ = np.linalg.eig(A)
+        
+        # Find the unobservable eigenvalues
+        unobservable_eigvals = eigvals[rank:]
+                        
+        print("\nRank of the Observability Matrix:", rank)
+        # check if the system is observable
+        if rank == A.shape[0]:
+            print("\nThe system is observable.")
+        else:
+            print("\nThe system is not observable.")        
+        # Check if all unobservable eigenvalues have negative real parts
+        if np.all(np.real(unobservable_eigvals) < 0):
+            print("The system is detectable.")
+        else:
+            print("The system is not detectable.")
+
+        return
         
     def create_input(self, t1, t2, dt, amp=None, phi=None, t0:float = 0, mode:str='sin'):
 
@@ -1015,6 +1142,35 @@ class SITOBBDS:
 
         return J
 
+
+    def MC_param(self,opt_params,n_iters, A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt):
+
+        data = {'J':[]}
+        for i, param_name in enumerate(opt_params):   
+            data[param_name] = []            
+    
+        for it in tqdm(range(int(n_iters))):
+            # Perturb parameters
+            p = copy.deepcopy(self.p)
+            for i, param_name in enumerate(opt_params):   
+                val = getattr(p,param_name)
+                delta = val*0.5
+                rand_val = np.random.uniform(low=val - delta, high=val + delta, size=None)
+                setattr(p,param_name,rand_val)
+                data[param_name].append(rand_val)
+    
+            # Get continous system
+            A, B, C, D = self.load_model(p = p)
+            
+            # Discretize continous system
+            Ad, Bd, C, D = self.c2d(A,B,C,D,dt)
+    
+                
+            # Evaluating cost function
+            J = self.ML(Ad,Bd,C,D,x0, u, y, R0, R1, R2, t1, t2, dt)
+            data['J'].append(J)
+                
+        return pd.DataFrame(data)
     
     def ML(self,Ad,Bd,C,D,x0, u, y, R0, R1, R2, t1, t2, dt):        
 
@@ -1075,8 +1231,8 @@ class SITOBBDS:
         # Selecting initial value
         if thetahat0 is None:
             thetahat0 = [self.p.params[k] for k in opt_params]
-        else:
-            thetahat0 = [(self.p.params[k],1e-10)[thetahat0==0] for k in opt_params]
+        # else:
+        #     thetahat0 = [(self.p.params[k],1e-10)[thetahat0==0] for k in opt_params]
         
         ests = np.zeros(len(opt_params))
         devs = np.zeros(len(opt_params))
@@ -1098,7 +1254,7 @@ class SITOBBDS:
         # return resulting A matrix
         p_hat = {}
         for i, p in enumerate(opt_params):
-            p_hat[p] = ests[i]
+            p_hat[p] = np.exp(ests[i])
 
         p_hat = ParamWrapper(p_hat,self.model)
 

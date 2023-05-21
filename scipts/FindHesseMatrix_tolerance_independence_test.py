@@ -195,7 +195,7 @@ if zero_start:
 else:
     thetahat0 = np.array([m.p.params[k] for k in opt_params])
 
-epsilons = [float(f'{j}e-{i}') for i in range(3,7) for j in range(1,11)]
+epsilons = [float(f'{j}e-{i}') for i in range(4,7) for j in range(1,2)]
 
 epsilons.sort()
 
