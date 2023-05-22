@@ -760,16 +760,36 @@ def rect_form(m,p,deg=True):
     
     return z
 
-def calculate_foster_network(p,r,d,h,verbose=False,plot=True):
+def calculate_foster_network(p,r,d,h,verbose=False,plot=True,mode:bool = 'real'):
     M = len(p)
     Z_foster = {}    
     for i in range(M+1):
         if i == 0:
-            Z_foster[f'R{i}'] = abs(d - sum([rm/pm for rm, pm in zip(r,p)]))            
-            Z_foster[f'L{i}'] = abs(h) 
+            Z_foster[f'R{i}'] = (d - sum([rm/pm for rm, pm in zip(r,p)])).real
+            Z_foster[f'L{i}'] = h
+
         else:
-            Z_foster[f'R{i}'] = abs(r[i-1]/p[i-1])
-            Z_foster[f'L{i}'] = abs(- (r[i-1]/p[i-1] / p[i-1]))            
+            # If real pole and real residue            
+            if r[i-1].imag == 0 and p[i-1].imag == 0:
+                Z_foster[f'R{i}'] = (r[i-1]/p[i-1]).real
+                Z_foster[f'L{i}'] = - (r[i-1]/p[i-1] / p[i-1]).real      
+                
+            else: # If complex pole or residue                
+                # Simplify names
+                s = r[i-1] # 
+                g = p[i-1]
+
+                # Assign values
+                Z_foster[f'R{i}'] = ((-2*g.real*s.real**3 - 2*s.real**2 * s.imag * g.imag)/(g.imag**2 * (s.real**2 + s.imag**2))).real
+                Z_foster[f'L{i}'] = ((2*s.real**3)/(g.imag**2 * (s.real**2+ s.imag**2))).real
+                Z_foster[f'C{i}'] = (1/(2*s.real)).real
+                Z_foster[f'r{i}'] = ((2*s.real**2)/(g.imag * s.imag - g.real * s.real)).real      
+    
+    if dataframe:
+        idxs = np.arange(0,M+1)
+        for abc in ['R','L','C','r']:
+            keys = Z_foster
+        df = pd.DataFrame({},index=idxs)            
     
     if verbose:
         for k,v in Z_foster.items():
@@ -790,8 +810,8 @@ def calculate_foster_network(p,r,d,h,verbose=False,plot=True):
     
     return Z_foster
 
-calculate_foster_network(poles,residues,d,h,verbose=True)
-=======
+# calculate_foster_network(poles,residues,d,h,verbose=True)
+# =======
 
 #%%
 def fourier_method(p,r,t1,t2,dt=1e-6):
@@ -808,7 +828,7 @@ def fourier_method(p,r,t1,t2,dt=1e-6):
     
     return
 
-fourier_method(poles,residues,0,0.2)
+# fourier_method(poles,residues,0,0.2)
 
 #%% CALCULATED FREQUENCY RESPONSE 
 f_calc = pd.read_csv(f'data\\freq\\cable_1C_freq_calc.txt',header=0,index_col=0)
@@ -845,7 +865,12 @@ mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2,plot_ser=False,plot_err=False
 fit, SER3, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
 mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
 
-Z_f = calculate_foster_network(poles,residues,d,h,verbose=True)
+#%%
+def print_pscad_branches_from_foster_network(Z_fn):
+    return
+
+
+Z_fn = calculate_foster_network(poles,residues,d,h,verbose=True)
 
 #%%
 f_fdcm = np.genfromtxt(r'data\freq\Harm_1c_pi.out',skip_header=1)

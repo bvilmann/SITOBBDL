@@ -6,7 +6,7 @@ Created on Mon Apr 24 15:14:27 2023
 """
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot
+import matplotlib.pyplot as plt
 
 #%%
 def rect_form(m,p,deg=True):
