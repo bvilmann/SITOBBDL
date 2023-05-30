@@ -1,0 +1,548 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Wed Sep  7 13:38:22 2022
+
+@author: bvilm
+"""
+
+import PowerFlow_46710 as pf # import Power Flow functions
+import LoadNetworkData
+import numpy as np
+import matplotlib.pyplot as plt
+from numpy.linalg import inv
+from numpy import conj
+import Plots
+
+def cmplx(mag, ang, degrees:bool = True):
+    phi = ang*(1,np.pi/180)[degrees]
+    return mag * (np.cos(phi) + 1j*np.sin(phi))
+
+#%%    
+
+# settings
+max_iter = 30 # Iteration settings
+err_tol = 1e-4
+n_pos = {1:(0,0),
+         2:(1,1),
+         3:(4,1),
+         4:(5,0),
+         5:(4,-1),
+         6:(1,-1),
+         7:(2.5,0),
+         }
+load_from_estimation = False
+# Load the Network data ...
+lnd = LoadNetworkData.LoadNetworkData()
+
+# Adding lines and transformers (bus1, bus2, r, x, g, b)
+if load_from_estimation:
+    for i, (node1, node2, d) in enumerate(G.edges.data()):
+        lnd.add_line(node1,node2,r[i],x[i],b=b[i],name=f'Z{i}')
+
+else:
+    lnd.add_line(1,2,0.04,0.52,name='Za',b=0.03)
+    lnd.add_line(2,3,0.03,0.47,name='Zb',b=0.02)
+    lnd.add_line(3,4,0.05,0.42,name='Zps',b=0.02)
+    lnd.add_line(1,7,0.04,0.43,name='Zc',b=0.02)
+    lnd.add_line(4,7,0.01,0.5,name='Zd',b=0.02)
+    lnd.add_line(1,6,0.04,0.46,name='Ze',b=0.02)
+    lnd.add_line(5,6,0.03,0.45,name='Zf',b=0.05)
+    lnd.add_line(4,5,0.04,0.45,name='Zg',b=0.05)
+
+# lnd.add_transformer(3,4,0,0.05,n=1,alpha=phi,name='Zps')
+
+# Adding loads and generators
+lnd.add_gen(1,0,0,v=1,theta=0)
+lnd.add_gen(4,0.9,0,v=1)
+lnd.add_load(2,0.42,0.05)
+lnd.add_load(3,0,0)
+lnd.add_load(5,0.43,0.06)
+lnd.add_load(6,0.48,0.05)
+lnd.add_load(7,0.41,0.04)
+
+lnd.build()
+lnd.draw()
+
+V,success,n, J, F = pf.PowerFlowNewton(lnd.Ybus,lnd.Sbus,lnd.V0,lnd.pv_index,lnd.pq_index,max_iter,err_tol)
+
+# Display results if the power flow analysis converged
+if success:
+    bus, branch = pf.DisplayResults(V,lnd)
+    system = pf.getSystem(V,lnd)
+
+    
+    
+    G, fig, ax = pf.plot_pf(bus,branch,n_pos)
+    fig.tight_layout()
+    plt.show()
+    # plt.savefig(f'C:\\Users\\bvilm\\Dropbox\\Apps\\Overleaf\\46710 - Stability and control - A1\\img\\pf_graph_{phi}.pdf')
+
+plt.close()
+
+
+losses = abs(abs(branch['From Bus Inj.','P']) - abs(branch['To Bus Inj.','P']))
+
+
+#%%
+# Get undirected graph
+G = G.to_undirected()
+
+# Populate graph with needed data
+
+for i,row in bus.iterrows():
+    G.nodes[i]['V'] = cmplx(row['Voltage','Magn.'],row['Voltage','Angle'])
+    # print(i,row['Voltage','Magn.'],row['Voltage','Angle'],G.nodes[i]['V'])
+    G.nodes[i]['Vr'] = G.nodes[i]['V'].real
+    G.nodes[i]['Vi'] = G.nodes[i]['V'].imag
+    G.nodes[i]['id'] = i
+    
+for i, row in branch.iterrows():
+    line = G.edges[row['From','Bus'],row['To','Bus']]
+    line['k'] = int(row['From','Bus'])
+    line['m'] = int(row['To','Bus'])
+    
+    # Get power flow
+    line['Sk'] = row['From Bus Inj.','P'] + 1j*row['From Bus Inj.','Q']
+    line['Sm'] = row['To Bus Inj.','P'] + 1j*row['To Bus Inj.','Q']
+    line['Pk'] = line['Sk'].real
+    line['Pm'] = line['Sm'].real
+    line['Qk'] = line['Sk'].imag
+    line['Qm'] = line['Sm'].imag
+
+    # line['Sk'] = line['S_in']
+    # line['Sm'] = line['S_out']
+
+    # Calculate currents    
+    line['Ik'] = conj(line['Sk']/G.nodes[line['k']]['V'])
+    line['Im'] = conj(line['Sm']/G.nodes[line['m']]['V'])
+    # line['Ik'] = (line['Sk']/G.nodes[line['k']]['V'])
+    # line['Im'] = (line['Sm']/G.nodes[line['m']]['V'])
+    line['Ik,re'] = line['Ik'].real
+    line['Im,re'] = line['Im'].real
+    line['Ik,im'] = line['Ik'].imag
+    line['Im,im'] = line['Im'].imag
+
+    # Get voltages
+    line['Vk']      = G.nodes[line['k']]['V']
+    line['Vk,re']   = G.nodes[line['k']]['Vr']
+    line['Vk,im']   = G.nodes[line['k']]['Vi']
+    line['Vm']      = G.nodes[line['m']]['V']
+    line['Vm,re']   = G.nodes[line['m']]['Vr']
+    line['Vm,im']   = G.nodes[line['m']]['Vi']
+
+    line['dV']      = line['Vk'] - line['Vm']
+    line['dVr']      = line['Vk,re'] - line['Vm,re']
+    line['dVi']      = line['Vk,im'] - line['Vm,im']
+
+    # Get impedances
+    line['Z'] = lnd.G.edges[line['k'],line['m']]['z']
+    line['Y'] = lnd.G.edges[line['k'],line['m']]['yc']
+    # print(line)
+    
+#%%
+def get_measurements(G):
+    N = len(G.nodes)
+    M = len(G.edges)
+    z = np.zeros((N*2+M*4,1))
+    i = 0
+    
+    
+    for j, (node, d) in enumerate(G.nodes.data()):
+        
+        n_idx = list(G.nodes).index(node)
+        z[j] = G.nodes[j+1]['Vr']
+        z[j+N] = G.nodes[j+1]['Vi']
+
+    i = 2*N
+    for (node1, node2, d) in (G.edges.data()):
+        z[i+M*0] = d['Ik,re']
+        z[i+M*1] = d['Ik,im']
+        z[i+M*2] = d['Im,re']
+        z[i+M*3] = d['Im,im']
+    
+        i += 1
+
+    return z
+    
+def get_jacobian(G):
+    N = len(G.nodes)
+    M = len(G.edges)
+    H = np.zeros((2*N+4*M,2*N))
+
+    n_idx = list(G.nodes)
+
+    # creating identity matrices for voltages
+    H[:2*N,:2*N] = np.eye(2*N)
+
+    # creating        
+    for idx, (node1, node2, d) in enumerate(G.edges.data()):        
+        # Get line parameters admittances
+        g,b = 1/d['Z'].real, 1/d['Z'].imag
+        bs = d['Y'].imag
+
+        # Get indices
+        bus1 = G.nodes[node1]
+        bus2 = G.nodes[node2]
+        kr = n_idx.index(node1)
+        mr = n_idx.index(node2)
+        ki = kr + N        
+        mi = mr + N        
+        i = 2*N + 4*idx
+        
+        print(i,'|',node1,node2,'|',kr,mr,'|',ki,mi)
+        
+        # 
+        # Ik,re
+        H[i+0,kr] += g
+        H[i+0,mr] += -g
+        H[i+0,ki] += -b
+        H[i+0,mi] += b
+        H[i+0,ki] += -bs
+                
+        # Ik,im
+        H[i+1,kr] += b
+        H[i+1,mr] += -b
+        H[i+1,ki] += g
+        H[i+1,mi] += -g
+        H[i+1,ki] += bs
+                
+        # Im,re
+        H[i+2,kr] += -g
+        H[i+2,mr] += g
+        H[i+2,ki] += b
+        H[i+2,mi] += -b
+        H[i+2,mi] += -bs
+                
+        # Im,im
+        H[i+3,kr] += -b
+        H[i+3,mr] += b
+        H[i+3,ki] += -g
+        H[i+3,mi] += g
+        H[i+3,mi] += bs
+                
+    return H
+
+def get_initial_conditions(G,r1=1e0,r2=1e3):
+    N = len(G.nodes)
+    M = len(G.edges)
+
+    n_states = N*2+M*4
+    H = np.zeros((n_states,2*N))
+
+    x0 = np.concatenate([np.ones(N),np.zeros(N )]) # + 4*M
+    R0 = np.eye(n_states)
+    
+    # 
+    R1 = np.eye(2*N)*r1
+    R2 = np.eye(n_states)*r2
+    
+    return x0, R0, R1, R2
+
+z = get_measurements(G)
+H = np.eye(2*len(G.nodes) + 4*len(G.edges))
+
+H = get_jacobian(G)
+# x0, R0 = get_initial_conditions(G)
+
+# asdf
+    
+#%%
+# x_hat_pred, y_hat_pred, eps, R = KF_estimation(H,z,x0,R0,R1,R2,t_steps=1000)
+
+# fig,ax = plt.subplots(1,1)
+
+# ax.plot(y_hat_pred.T)
+# ax.plot(x_hat_pred.T)
+
+#%%
+def RLSE(H,R=None): #RECURSIVE LEAST SQUARES ESTIMATION
+    # For Ax = b => x = inv(A.T @ A)
+    N = len(G.edges)
+    M = 3# Number of type parameters estimated
+    A = np.zeros((N*4,M*N))
+    B = np.zeros((4*N,1))
+
+    
+    if R is None:
+        R= np.diag(np.ones(32))
+    else:
+        R=np.diag(R)
+    
+    # Handle edges
+    for i, (node1, node2, d) in enumerate(G.edges.data()):
+        idx1 = i*4
+        idx2 = i*M
+    
+        A[idx1:idx1+4,idx2:idx2 + M] = np.array([
+            [d['dVr'],   -d['dVi'], -d['Vk,im']],
+            [d['dVr'],    d['dVr'],  d['Vk,re']],
+            [-d['dVr'],   d['dVi'], -d['Vm,im']],
+            [-d['dVi'],  -d['dVr'],  d['Vm,re']]
+            ])
+    
+        B[idx1:idx1+4,0] = np.array([d['Ik,re'], 
+                                     d['Ik,im'], 
+                                     d['Im,re'], 
+                                     d['Im,im']])
+    
+    X = (inv(A.T @ A) @ A.T) @ B
+
+    return A, X, B
+
+def LSE(G,R=None):
+    # For Ax = b => x = inv(A.T @ A)
+    N = len(G.edges)
+    n = len(G.nodes)    
+    M = 3 # Number of type parameters estimated
+    A = np.zeros((2*n + 4*N,2*n + M*N))
+    B = np.zeros((2*n + 4*N,1))
+    
+
+    A[:2*n,:2*n] = np.eye(2*n)
+    B[0*n:1*n,0] = [G.nodes[i+1]['Vr'] for i in range(len(G.nodes))]
+    B[1*n:2*n,0] = [G.nodes[i+1]['Vi'] for i in range(len(G.nodes))]
+    
+    if R is None:
+        R= np.diag(np.ones(32))
+    else:
+        R=np.diag(R)
+
+    # A = np.zeros((4*N,M*N))
+    # B = np.zeros((4*N,1))
+    
+    # Handle edges
+    for i, (node1, node2, d) in enumerate(G.edges.data()):
+
+        nk_idx = node1-1
+        nm_idx = node2-1
+
+        idx1 = i*4 + 2*n
+        idx2 = i*M + 2*n
+
+        # idx1 = i*4
+        # idx2 = i*M
+
+        print(idx1,idx2)
+
+        # Associate 
+        A[idx1:idx1+4,idx2:idx2 + M] += np.array([
+            [d['dVr'],   -d['dVi'], -d['Vk,im']],
+            [d['dVi'],    d['dVr'],  d['Vk,re']],
+            [-d['dVr'],   d['dVi'], -d['Vm,im']],
+            [-d['dVi'],  -d['dVr'],  d['Vm,re']]
+            ])
+        
+        # 
+        A[[idx1+0],[nk_idx,nk_idx+n]] += \
+            -np.array([d['Pk']/(abs(d['Vk'])**2),d['Qk']/(abs(d['Vk'])**2)])
+        A[[idx1+1],[nk_idx+n,nk_idx]] += \
+            -np.array([d['Pk']/(abs(d['Vk'])**2),-d['Qk']/(abs(d['Vk'])**2)])
+        A[[idx1+2],[nm_idx,nm_idx+n]] += \
+            -np.array([d['Pm']/(abs(d['Vm'])**2),d['Qm']/(abs(d['Vm'])**2)])
+        A[[idx1+3],[nm_idx+n,nm_idx]] += \
+            -np.array([d['Pm']/(abs(d['Vm'])**2),-d['Qm']/(abs(d['Vm'])**2)])
+            
+        # A[idx1:idx1+4,idx2:idx2 + M] = np.array([
+        #     [d['dVr'],   -d['dVi'], -d['Vk,im']],
+        #     [d['dVi'],    d['dVr'],  d['Vk,re']],
+        #     [-d['dVr'],   d['dVi'], -d['Vm,im']],
+        #     [-d['dVi'],  -d['dVr'],  d['Vm,re']]
+        #     ])
+    
+        # B[idx1:idx1+4,0] = np.array([d['Ik,re'], 
+        #                               d['Ik,im'], 
+        #                               d['Im,re'], 
+        #                               d['Im,im']])
+    
+    X = (inv(A.T @ A) @ A.T) @ B
+    
+    X = X[2*n:]
+
+    return A, X, B
+
+# X = X2
+
+##%% RESIDUAL ANALYSIS
+def residual_analysis(r,x,b,G, normalize=True):
+    eps_r = np.zeros(len(G.edges))
+    eps_x = np.zeros(len(G.edges))
+    eps_b = np.zeros(len(G.edges))
+    
+    for i, (node1, node2, d) in enumerate(G.edges.data()):
+        eps_r[i] = (np.real(d['Z']) - r[i])/(1,np.real(d['Z']))[normalize]
+        eps_x[i] = (np.imag(d['Z']) - x[i])/(1,np.imag(d['Z']))[normalize]
+        eps_b[i] = (np.imag(d['Y']) - b[i])/(1,np.imag(d['Y']))[normalize]
+     
+    fig,ax = plt.subplots(3,1,dpi=150,sharex=True)
+    for i in range(3):
+        ax[i].grid()
+        ax[i].set(ylabel='$\\varepsilon_{'+['R','X','B'][i]+'}$'+f' {("[p.u.]","[%]")[normalize]}')
+    
+    ax[0].bar([i for i in range(len(eps_r))],eps_r*(1,100)[normalize],zorder=3)
+    ax[1].bar([i for i in range(len(eps_r))],eps_x*(1,100)[normalize],zorder=3)
+    ax[2].bar([i for i in range(len(eps_r))],eps_b*(1,100)[normalize],zorder=3)
+    
+    ax[2].set_xticks([i for i in range(len(eps_r))])
+    ax[2].set_xticklabels([str(list(G.edges)[i]) for i in range(len(G.edges))])
+    ax[2].set_xlabel('Lines')
+
+    eps = np.concatenate([eps_r,eps_x,eps_b])
+
+    return eps
+
+A, X, B = LSE(G)
+
+fig, ax =plt.subplots(1,1,dpi=150)
+ax.imshow(np.where(abs(np.hstack([A,B]))!=0,abs(np.hstack([A,B])),np.nan))
+ax.axvline(len(G.nodes)*2-0.5,color='k',lw=0.75)
+ax.axhline(len(G.nodes)*2-0.5,color='k',lw=0.75)
+
+Z = np.array([1/complex(r,xl) for r,xl in zip(X[::3],X[1::3])])
+r = np.real(Z)
+x = np.imag(Z)
+y = np.array([complex(0,y_) for y_ in X[2::3]])
+b = np.imag(y)
+
+eps1 = residual_analysis(r,x,b,G)
+
+
+#%%
+# theta, V_hat, system_hat = pf.MLE()
+# r = theta.x[::3]
+# x = theta.x[1::3]
+# b = theta.x[2::3]
+
+# #%%
+# eps2 = residual_analysis(r,x,b,G)
+
+# #%%
+# fig,ax = plt.subplots(1,1,dpi=150)
+# ax.bar([i for i in range(len(system))],system - system_hat)
+
+#%%
+# data = pf.MCS(7*10)
+# min_J_index = data['J'].idxmin()
+# min_J_parameters = data.loc[min_J_index, [col for col in data.columns if col != 'J']]
+
+
+#%%
+import numpy as np
+
+class RLS:
+    def __init__(self, n_features, n_outputs, beta_init=None, P_init=None):
+        self.n_features = n_features
+        self.beta = beta_init if beta_init is not None else np.zeros(n_outputs)
+        self.P = P_init if P_init is not None else np.eye(n_features)
+
+    def update(self, x, y):
+        x = x.reshape(-1, 1)
+        y = np.array([y])
+        
+        # Compute the gain vector
+        K = np.dot(self.P, x) / (1 + np.dot(x.T, np.dot(self.P, x)))
+
+        # Update the parameter estimate
+        self.beta += K.flatten() * (y - np.dot(x.T, self.beta))
+
+        # Update the covariance matrix
+        self.P = self.P - np.dot(K, np.dot(x.T, self.P))
+
+    def predict(self, x):
+        x = x.reshape(-1, 1)
+        return np.dot(x.T, self.beta)
+
+# Example usage:
+rls = RLS(n_features=2,n_outputs=2)
+
+for _ in range(1000):
+    x = np.random.rand(2)  # Input features
+    y = np.dot(x, [2, -3]) + np.random.normal(0, 0.1)  # Output (with some noise)
+    rls.update(x, y)
+
+print(rls.beta)  # Should be close to [2, -3]
+#%%
+class RecursiveLeastSquares:
+    def __init__(self, n_features,n_observations, lambda_=1, P_init=None, beta_init=None):
+        self.n_features = n_features
+        self.lambda_ = lambda_
+        self.beta = beta_init if beta_init is not None else np.zeros(n_features)
+        self.P = P_init if P_init is not None else np.eye(n_features) * 1000  # high uncertainty in initial estimates
+
+    def update(self, x, y):
+        x = np.array(x).reshape(-1, 1)
+        y = np.array([y])
+        
+        # Compute the gain vector
+        K = self.P @ x / (self.lambda_ + x.T @ self.P @ x)
+
+        # Update the parameter estimate
+        self.beta += (K * (y - x.T @ self.beta)).flatten()
+
+        # Update the covariance matrix
+        self.P = (self.P - K @ x.T @ self.P) / self.lambda_
+
+    def predict(self, x):
+        x = np.array(x).reshape(-1, 1)
+        return np.dot(x.T, self.beta)
+
+rls = RecursiveLeastSquares(n_features=len(X),n_observations=len(B))
+# Assume data_stream and output_stream are generator functions or similar that provide
+# the feature vectors and outputs one at a time
+# for x, y in zip(data_stream, output_stream):
+# preds = np.
+for _ in range(1000):
+    for i in range(len(B)):
+        x = A[i]  # This is a vector of 24 features
+        y = B[i]  # This is the corresponding output
+        rls.update(x, y) 
+        prediction = rls.predict(x)
+
+
+print(rls.beta)  # Should be close to [2, -3]
+print(B.ravel())  # Should be close to [2, -3]
+
+
+#%%
+
+
+# def LSE_(x, H, z_hx, W=None, tol=1e-6, max_iter=1000):
+#     """
+#     This function implements the state update process, including state correction and convergence check.
+
+#     Parameters:
+#     x: Current state vector
+#     H: Jacobian matrix
+#     W: Weight matrix
+#     z_hx: Difference between actual and predicted measurements
+#     tol: Convergence tolerance
+#     max_iter: Maximum number of iterations
+
+#     Returns:
+#     x: Updated state vector
+#     converged: Whether the solution has converged
+#     """
+#     # Initialize convergence flag
+#     converged = False
+    
+#     if W is None: W = np.ones(H.shape)
+
+#     for _ in range(max_iter):
+#         # Calculate the correction vector
+#         delta_x = np.linalg.inv(H.T @ W @ H) @ (H.T @ W @ z_hx)
+
+#         # Update the state estimate
+#         x += delta_x
+
+#         # Check for convergence
+#         if np.linalg.norm(delta_x) < tol:
+#             converged = True
+#             break
+
+#     return x, converged
+
+# LSE_(X,A,eps1)
+
+
+
+
+
