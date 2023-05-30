@@ -19,7 +19,7 @@ from mpl_toolkits.axes_grid1.inset_locator import mark_inset
 plt.rcParams.update({'lines.markeredgewidth': 1})
 plt.rcParams.update({'font.size':12})
 # plt.rcParams['text.usetex'] = False
-plt.rcParams['text.usetex'] = True
+plt.rcParams['text.usetex'] = False
 plt.rcParams['text.latex.preamble'] = r"\usepackage{bm} \usepackage{amsmath} \usepackage{amssymb}"
 prop_cycle = plt.rcParams['axes.prop_cycle']
 clrs = prop_cycle.by_key()['color']

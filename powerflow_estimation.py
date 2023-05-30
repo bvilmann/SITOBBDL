@@ -96,10 +96,15 @@ for i,row in bus.iterrows():
     G.nodes[i]['Vi'] = G.nodes[i]['V'].imag
     G.nodes[i]['id'] = i
     
+    
 for i, row in branch.iterrows():
     line = G.edges[row['From','Bus'],row['To','Bus']]
     line['k'] = int(row['From','Bus'])
     line['m'] = int(row['To','Bus'])
+
+    # Get impedances
+    line['Z'] = lnd.G.edges[line['k'],line['m']]['z']
+    line['Y'] = lnd.G.edges[line['k'],line['m']]['yc']
     
     # Get power flow
     line['Sk'] = row['From Bus Inj.','P'] + 1j*row['From Bus Inj.','Q']
@@ -112,15 +117,20 @@ for i, row in branch.iterrows():
     # line['Sk'] = line['S_in']
     # line['Sm'] = line['S_out']
 
-    # Calculate currents    
+    # Calculate line currents    
     line['Ik'] = conj(line['Sk']/G.nodes[line['k']]['V'])
     line['Im'] = conj(line['Sm']/G.nodes[line['m']]['V'])
-    # line['Ik'] = (line['Sk']/G.nodes[line['k']]['V'])
-    # line['Im'] = (line['Sm']/G.nodes[line['m']]['V'])
     line['Ik,re'] = line['Ik'].real
     line['Im,re'] = line['Im'].real
     line['Ik,im'] = line['Ik'].imag
     line['Im,im'] = line['Im'].imag
+
+    # Calculate shunt currents  
+    # TODO: REFINE THIS ESTIMATION
+    line['Ik,sh,re'] =   - line['Y'].imag * G.nodes[line['k']]['Vi']/np.sqrt(1.0125)
+    line['Ik,sh,im'] =     line['Y'].imag * G.nodes[line['k']]['Vr']/np.sqrt(1.0125)
+    line['Im,sh,re'] =   - line['Y'].imag * G.nodes[line['m']]['Vi']/np.sqrt(1.0125)
+    line['Im,sh,im'] =     line['Y'].imag * G.nodes[line['m']]['Vr']/np.sqrt(1.0125)
 
     # Get voltages
     line['Vk']      = G.nodes[line['k']]['V']
@@ -134,125 +144,42 @@ for i, row in branch.iterrows():
     line['dVr']      = line['Vk,re'] - line['Vm,re']
     line['dVi']      = line['Vk,im'] - line['Vm,im']
 
-    # Get impedances
-    line['Z'] = lnd.G.edges[line['k'],line['m']]['z']
-    line['Y'] = lnd.G.edges[line['k'],line['m']]['yc']
-    # print(line)
+# summing up current injection
+for node,row in bus.iterrows():
+
+    connected_edges = G.edges(node, data=True)    
+
+    # iterate through each edge and sum the edge_value
+    S_line = complex(0,0)
+    for _, _, edge in connected_edges:
+        if node == edge['k']:
+            S_line += -edge['Sk']
+        else:
+            S_line += -edge['Sm']
+
+    S_line += G.nodes[node]['gen']
+
+    G.nodes[node]['Sk'] = S_line
+    G.nodes[node]['Pk'] = S_line.real
+    G.nodes[node]['Qk'] = S_line.imag
     
-#%%
-def get_measurements(G):
-    N = len(G.nodes)
-    M = len(G.edges)
-    z = np.zeros((N*2+M*4,1))
-    i = 0
+    # Calculate shunt currents    
+    G.nodes[node]['Ik,sh'] = conj(G.nodes[node]['Sk']/G.nodes[node]['V'])
+    G.nodes[node]['Ik,sh,re'] = G.nodes[node]['Ik,sh'].real
+    G.nodes[node]['Ik,sh,im'] = G.nodes[node]['Ik,sh'].imag
     
+    G.nodes[node]['Ik,sh'] =    conj(G.nodes[node]['Sk']/G.nodes[node]['V'])
+    G.nodes[node]['Yc'] =  Yc =  -conj(G.nodes[node]['Sk']/(G.nodes[node]['V']**2))
+
+    G.nodes[node]['Ik,sh,re'] =   - Yc.imag * G.nodes[node]['Vi']
+    G.nodes[node]['Ik,sh,im'] =     Yc.imag * G.nodes[node]['Vr']
+
+    # G.nodes[node]['Ik,sh,re'] =   - * G.nodes[node]['Vi']
+    # G.nodes[node]['Ik,sh,im'] =     G.nodes[node]['Y'].imag * G.nodes[node]['Vr']
+
     
-    for j, (node, d) in enumerate(G.nodes.data()):
-        
-        n_idx = list(G.nodes).index(node)
-        z[j] = G.nodes[j+1]['Vr']
-        z[j+N] = G.nodes[j+1]['Vi']
-
-    i = 2*N
-    for (node1, node2, d) in (G.edges.data()):
-        z[i+M*0] = d['Ik,re']
-        z[i+M*1] = d['Ik,im']
-        z[i+M*2] = d['Im,re']
-        z[i+M*3] = d['Im,im']
-    
-        i += 1
-
-    return z
-    
-def get_jacobian(G):
-    N = len(G.nodes)
-    M = len(G.edges)
-    H = np.zeros((2*N+4*M,2*N))
-
-    n_idx = list(G.nodes)
-
-    # creating identity matrices for voltages
-    H[:2*N,:2*N] = np.eye(2*N)
-
-    # creating        
-    for idx, (node1, node2, d) in enumerate(G.edges.data()):        
-        # Get line parameters admittances
-        g,b = 1/d['Z'].real, 1/d['Z'].imag
-        bs = d['Y'].imag
-
-        # Get indices
-        bus1 = G.nodes[node1]
-        bus2 = G.nodes[node2]
-        kr = n_idx.index(node1)
-        mr = n_idx.index(node2)
-        ki = kr + N        
-        mi = mr + N        
-        i = 2*N + 4*idx
-        
-        print(i,'|',node1,node2,'|',kr,mr,'|',ki,mi)
-        
-        # 
-        # Ik,re
-        H[i+0,kr] += g
-        H[i+0,mr] += -g
-        H[i+0,ki] += -b
-        H[i+0,mi] += b
-        H[i+0,ki] += -bs
-                
-        # Ik,im
-        H[i+1,kr] += b
-        H[i+1,mr] += -b
-        H[i+1,ki] += g
-        H[i+1,mi] += -g
-        H[i+1,ki] += bs
-                
-        # Im,re
-        H[i+2,kr] += -g
-        H[i+2,mr] += g
-        H[i+2,ki] += b
-        H[i+2,mi] += -b
-        H[i+2,mi] += -bs
-                
-        # Im,im
-        H[i+3,kr] += -b
-        H[i+3,mr] += b
-        H[i+3,ki] += -g
-        H[i+3,mi] += g
-        H[i+3,mi] += bs
-                
-    return H
-
-def get_initial_conditions(G,r1=1e0,r2=1e3):
-    N = len(G.nodes)
-    M = len(G.edges)
-
-    n_states = N*2+M*4
-    H = np.zeros((n_states,2*N))
-
-    x0 = np.concatenate([np.ones(N),np.zeros(N )]) # + 4*M
-    R0 = np.eye(n_states)
-    
-    # 
-    R1 = np.eye(2*N)*r1
-    R2 = np.eye(n_states)*r2
-    
-    return x0, R0, R1, R2
-
-z = get_measurements(G)
-H = np.eye(2*len(G.nodes) + 4*len(G.edges))
-
-H = get_jacobian(G)
-# x0, R0 = get_initial_conditions(G)
-
-# asdf
-    
-#%%
-# x_hat_pred, y_hat_pred, eps, R = KF_estimation(H,z,x0,R0,R1,R2,t_steps=1000)
-
-# fig,ax = plt.subplots(1,1)
-
-# ax.plot(y_hat_pred.T)
-# ax.plot(x_hat_pred.T)
+    print(node,G.nodes[node]['Pk'],Yc)
+ 
 
 #%%
 def RLSE(H,R=None): #RECURSIVE LEAST SQUARES ESTIMATION
@@ -307,8 +234,24 @@ def LSE(G,R=None):
     else:
         R=np.diag(R)
 
-    # A = np.zeros((4*N,M*N))
-    # B = np.zeros((4*N,1))
+    A = np.zeros((4*N,M*N))
+    B = np.zeros((4*N,1))
+    # A = np.zeros((2*n + 4*N,2*n + M*N))
+    # B = np.zeros((2*n + 4*N,1))
+
+    # A[0*n:1*n,0*n:1*n] = np.diag([G.nodes[i+1]['Vr'] for i in range(len(G.nodes))])
+    # A[1*n:2*n,1*n:2*n] = np.diag([G.nodes[i+1]['Vi'] for i in range(len(G.nodes))])
+    # B[0*n:1*n,0] = [G.nodes[i+1]['Vr'] for i in range(len(G.nodes))]
+    # B[1*n:2*n,0] = [G.nodes[i+1]['Vi'] for i in range(len(G.nodes))]
+   
+    # Handle nodes
+    for i, (node, d) in enumerate(G.nodes.data()):        
+        # A[i,i] = d['Pk']/(abs(d['V'])**2)
+        # A[i,i+n] = d['Qk']/(abs(d['V'])**2)
+        # A[i+n,i] = -d['Qk']/(abs(d['V'])**2)
+        # A[i+n,i+n] = d['Pk']/(abs(d['V'])**2)
+   
+        pass
     
     # Handle edges
     for i, (node1, node2, d) in enumerate(G.edges.data()):
@@ -319,44 +262,67 @@ def LSE(G,R=None):
         idx1 = i*4 + 2*n
         idx2 = i*M + 2*n
 
-        # idx1 = i*4
-        # idx2 = i*M
+        idx1 = i*4
+        idx2 = i*M
 
         print(idx1,idx2)
 
         # Associate 
-        A[idx1:idx1+4,idx2:idx2 + M] += np.array([
-            [d['dVr'],   -d['dVi'], -d['Vk,im']],
-            [d['dVi'],    d['dVr'],  d['Vk,re']],
-            [-d['dVr'],   d['dVi'], -d['Vm,im']],
-            [-d['dVi'],  -d['dVr'],  d['Vm,re']]
-            ])
-        
-        # 
-        A[[idx1+0],[nk_idx,nk_idx+n]] += \
-            -np.array([d['Pk']/(abs(d['Vk'])**2),d['Qk']/(abs(d['Vk'])**2)])
-        A[[idx1+1],[nk_idx+n,nk_idx]] += \
-            -np.array([d['Pk']/(abs(d['Vk'])**2),-d['Qk']/(abs(d['Vk'])**2)])
-        A[[idx1+2],[nm_idx,nm_idx+n]] += \
-            -np.array([d['Pm']/(abs(d['Vm'])**2),d['Qm']/(abs(d['Vm'])**2)])
-        A[[idx1+3],[nm_idx+n,nm_idx]] += \
-            -np.array([d['Pm']/(abs(d['Vm'])**2),-d['Qm']/(abs(d['Vm'])**2)])
-            
-        # A[idx1:idx1+4,idx2:idx2 + M] = np.array([
+        # A[idx1:idx1+4,idx2:idx2 + M] += np.array([
         #     [d['dVr'],   -d['dVi'], -d['Vk,im']],
         #     [d['dVi'],    d['dVr'],  d['Vk,re']],
         #     [-d['dVr'],   d['dVi'], -d['Vm,im']],
         #     [-d['dVi'],  -d['dVr'],  d['Vm,re']]
         #     ])
+        
+        # 
+        # A[[idx1+0],[nk_idx,nk_idx+n]] += \
+        #     -np.array([d['Pk']/(abs(d['Vk'])**2),d['Qk']/(abs(d['Vk'])**2)])
+        # A[[idx1+1],[nk_idx+n,nk_idx]] += \
+        #     -np.array([d['Pk']/(abs(d['Vk'])**2),-d['Qk']/(abs(d['Vk'])**2)])
+        # A[[idx1+2],[nm_idx,nm_idx+n]] += \
+        #     -np.array([d['Pm']/(abs(d['Vm'])**2),d['Qm']/(abs(d['Vm'])**2)])
+        # A[[idx1+3],[nm_idx+n,nm_idx]] += \
+        #     -np.array([d['Pm']/(abs(d['Vm'])**2),-d['Qm']/(abs(d['Vm'])**2)])
+            
+        A[idx1:idx1+4,idx2:idx2 + M] = np.array([
+            [d['dVr'],   -d['dVi'], -d['Vk,im']],
+            [d['dVi'],    d['dVr'],  d['Vk,re']],
+            [-d['dVr'],   d['dVi'], -d['Vm,im']],
+            [-d['dVi'],  -d['dVr'],  d['Vm,re']]
+            ])
     
-        # B[idx1:idx1+4,0] = np.array([d['Ik,re'], 
-        #                               d['Ik,im'], 
-        #                               d['Im,re'], 
-        #                               d['Im,im']])
+        # B[idx1:idx1+4,0] = np.array([
+        #     d['Ik,re']    +   G.nodes[node1]['Ik,sh,re']/G.nodes[node1]['Vr'], 
+        #     d['Ik,im']    +   G.nodes[node1]['Ik,sh,im']/G.nodes[node1]['Vi'], 
+        #     d['Im,re']    +   G.nodes[node2]['Ik,sh,re']/G.nodes[node2]['Vr'], 
+        #     d['Im,im']    +   G.nodes[node2]['Ik,sh,im']/G.nodes[node2]['Vi'], 
+        #     ])
+        
+        # B[idx1:idx1+4,0] = np.array([
+        #     d['Ik,re']    +   G.nodes[node1]['Ik,sh,re'], 
+        #     d['Ik,im']  ,#  +   G.nodes[node1]['Ik,sh,im'], 
+        #     d['Im,re']    +   G.nodes[node2]['Ik,sh,re'], 
+        #     d['Im,im']  ,#  +   G.nodes[node2]['Ik,sh,im'], 
+        #     ])
+        
+        B[idx1:idx1+4,0] = np.array([
+            d['Ik,re'], 
+            d['Ik,im'], 
+            d['Im,re'], 
+            d['Im,im'], 
+            ])
+
+        B[idx1:idx1+4,0] += np.array([
+            d['Ik,sh,re'], 
+            d['Ik,sh,im'], 
+            d['Im,sh,re'], 
+            d['Im,sh,im'], 
+            ])
     
     X = (inv(A.T @ A) @ A.T) @ B
     
-    X = X[2*n:]
+    # X = X[2*n:]
 
     return A, X, B
 
@@ -394,8 +360,13 @@ A, X, B = LSE(G)
 
 fig, ax =plt.subplots(1,1,dpi=150)
 ax.imshow(np.where(abs(np.hstack([A,B]))!=0,abs(np.hstack([A,B])),np.nan))
-ax.axvline(len(G.nodes)*2-0.5,color='k',lw=0.75)
-ax.axhline(len(G.nodes)*2-0.5,color='k',lw=0.75)
+# ax.axvline(len(G.nodes)-0.5,color='k',lw=0.75,alpha=0.5)
+# ax.axhline(len(G.nodes)-0.5,color='k',lw=0.75,alpha=0.5)
+# ax.axvline(len(G.nodes)*2-0.5,color='k',lw=0.75)
+# ax.axhline(len(G.nodes)*2-0.5,color='k',lw=0.75)
+# ax.axvline(len(G.nodes)*2+len(G.edges)*3-0.5,color='k',lw=0.75)
+ax.axvline(len(G.edges)*3-0.5,color='k',lw=0.75)
+
 
 Z = np.array([1/complex(r,xl) for r,xl in zip(X[::3],X[1::3])])
 r = np.real(Z)
@@ -405,6 +376,78 @@ b = np.imag(y)
 
 eps1 = residual_analysis(r,x,b,G)
 
+#%% ==================== WEIGHTED LEAST SQUARES ==================== 
+def WLS(X, Y, W):
+    # Create a diagonal matrix using the weights
+    W_sqrt = np.sqrt(np.diagflat(W))
+    
+    # Apply the square root of the weights to X and Y
+    X_weighted = np.matmul(W_sqrt, X)
+    Y_weighted = np.matmul(W_sqrt, Y)
+    
+    # Calculate the parameters
+    X_weighted_transpose = np.transpose(X_weighted)
+    XWX_inverse = inv(np.matmul(X_weighted_transpose, X_weighted))
+    b = np.matmul(np.matmul(XWX_inverse, X_weighted_transpose), Y_weighted)
+    
+    return b
+
+def create_weight_vector(G):
+    N = 4
+    W = np.zeros(len(G.edges)*N)
+    for i, (n1,n2, d) in enumerate(G.edges.data()):
+        W[i*N:i*N + N] = abs(d['Sk'])        
+
+        W[i]   = abs(1e6*d['Sk'])        
+        W[i+1] = 1/abs(1e6*d['Sk'])        
+        W[i+2] = abs(1e6*d['Sk'])        
+        W[i+3] = 1/abs(1e6*d['Sk'])        
+
+    
+    return W
+
+def WLS(X, Y, W):
+    # Create a diagonal matrix using the weights
+    W_sqrt = np.sqrt(np.diagflat(W))
+    
+    # Apply the square root of the weights to X and Y
+    X_weighted = W_sqrt @ X
+    Y_weighted = W_sqrt @ Y
+    
+    # Calculate the parameters
+    X_weighted_transpose = X_weighted.T
+    XWX_inverse = inv(X_weighted_transpose @ X_weighted)
+    b = XWX_inverse @ X_weighted_transpose @ Y_weighted
+    
+    return b
+
+W = create_weight_vector(G)
+
+# B = WLS(X, Y, W)
+# B = WLS(A, B, W) #  WLS(X, Y, W), where Y = Xb + e
+
+# Create a diagonal matrix using the weights
+W_sqrt = np.sqrt(np.diagflat(W))
+
+# Apply the square root of the weights to X and Y
+X_weighted = W_sqrt @ A
+Y_weighted = W_sqrt @ B 
+
+# Calculate the parameters
+X_weighted_transpose = X_weighted.T
+XWX_inverse = inv(X_weighted_transpose @ X_weighted)
+X = XWX_inverse @ X_weighted_transpose @ Y_weighted
+
+Z = np.array([1/complex(r,xl) for r,xl in zip(X[::3],X[1::3])])
+r = np.real(Z)
+x = np.imag(Z)
+y = np.array([complex(0,y_) for y_ in X[2::3]])
+b = np.imag(y)
+
+eps2 = residual_analysis(r,x,b,G)
+
+fig,ax = plt.subplots(1,1,dpi=150)
+plt.step([i for i in range(len(W))],W)
 
 #%%
 # theta, V_hat, system_hat = pf.MLE()
