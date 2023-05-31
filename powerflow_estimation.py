@@ -127,10 +127,10 @@ for i, row in branch.iterrows():
 
     # Calculate shunt currents  
     # TODO: REFINE THIS ESTIMATION
-    line['Ik,sh,re'] =   - line['Y'].imag * G.nodes[line['k']]['Vi']/np.sqrt(1.0125)
-    line['Ik,sh,im'] =     line['Y'].imag * G.nodes[line['k']]['Vr']/np.sqrt(1.0125)
-    line['Im,sh,re'] =   - line['Y'].imag * G.nodes[line['m']]['Vi']/np.sqrt(1.0125)
-    line['Im,sh,im'] =     line['Y'].imag * G.nodes[line['m']]['Vr']/np.sqrt(1.0125)
+    line['Ik,sh,re'] =   - line['Y'].imag * G.nodes[line['k']]['Vi']/1
+    line['Ik,sh,im'] =     line['Y'].imag * G.nodes[line['k']]['Vr']/1
+    line['Im,sh,re'] =   - line['Y'].imag * G.nodes[line['m']]['Vi']/1
+    line['Im,sh,im'] =     line['Y'].imag * G.nodes[line['m']]['Vr']/1
 
     # Get voltages
     line['Vk']      = G.nodes[line['k']]['V']
@@ -244,38 +244,31 @@ def LSE(G,R=None):
     # B[0*n:1*n,0] = [G.nodes[i+1]['Vr'] for i in range(len(G.nodes))]
     # B[1*n:2*n,0] = [G.nodes[i+1]['Vi'] for i in range(len(G.nodes))]
    
-    # Handle nodes
-    for i, (node, d) in enumerate(G.nodes.data()):        
-        # A[i,i] = d['Pk']/(abs(d['V'])**2)
-        # A[i,i+n] = d['Qk']/(abs(d['V'])**2)
-        # A[i+n,i] = -d['Qk']/(abs(d['V'])**2)
-        # A[i+n,i+n] = d['Pk']/(abs(d['V'])**2)
-   
-        pass
+    # Create mappings
+    node_to_row = {node: i for i, node in enumerate(G.nodes())}
+    edge_to_col = {(min(edge), max(edge)): i for i, edge in enumerate(G.edges())}
+    edge_to_col.update({(max(edge), min(edge)): i for i, edge in enumerate(G.edges())})
+
+    # Reverse mappings
+    row_to_node = {i: node for node, i in node_to_row.items()}
+    col_to_edge = {i: edge for edge, i in edge_to_col.items()}
+
+    rows_to_nodes = lambda x: tuple([row_to_node[elm] for elm in x])
+    
+    print("Node to row mapping:", node_to_row)
+    print("Edge to column mapping:", edge_to_col)
     
     # Handle edges
     for i, (node1, node2, d) in enumerate(G.edges.data()):
-
+        # indices
         nk_idx = node1-1
         nm_idx = node2-1
-
-        idx1 = i*4 + 2*n
-        idx2 = i*M + 2*n
-
+        # idx1 = i*4 + 2*n
+        # idx2 = i*M + 2*n
         idx1 = i*4
         idx2 = i*M
-
         print(idx1,idx2)
-
         # Associate 
-        # A[idx1:idx1+4,idx2:idx2 + M] += np.array([
-        #     [d['dVr'],   -d['dVi'], -d['Vk,im']],
-        #     [d['dVi'],    d['dVr'],  d['Vk,re']],
-        #     [-d['dVr'],   d['dVi'], -d['Vm,im']],
-        #     [-d['dVi'],  -d['dVr'],  d['Vm,re']]
-        #     ])
-        
-        # 
         # A[[idx1+0],[nk_idx,nk_idx+n]] += \
         #     -np.array([d['Pk']/(abs(d['Vk'])**2),d['Qk']/(abs(d['Vk'])**2)])
         # A[[idx1+1],[nk_idx+n,nk_idx]] += \
@@ -285,12 +278,57 @@ def LSE(G,R=None):
         # A[[idx1+3],[nm_idx+n,nm_idx]] += \
         #     -np.array([d['Pm']/(abs(d['Vm'])**2),-d['Qm']/(abs(d['Vm'])**2)])
             
-        A[idx1:idx1+4,idx2:idx2 + M] = np.array([
-            [d['dVr'],   -d['dVi'], -d['Vk,im']],
-            [d['dVi'],    d['dVr'],  d['Vk,re']],
-            [-d['dVr'],   d['dVi'], -d['Vm,im']],
-            [-d['dVi'],  -d['dVr'],  d['Vm,re']]
-            ])
+
+        
+        # A[idx1:idx1+4,idx2:idx2 + 2] += np.array([
+        #     [d['dVr'],   -d['dVi']],
+        #     [d['dVi'],    d['dVr']],
+        #     [-d['dVr'],   d['dVi']],
+        #     [-d['dVi'],  -d['dVr']]
+        #     ])
+        
+        # # Iterate thorugh incident matrix
+        # # get the nodes
+        # row1 = node_to_row[node1]
+        # for k in G.neighbors(node1):
+        #     edge = G.edges[(node1,k)]
+        #     A[idx1:idx1+4,idx2+2 + 3*edge_to_col[node1,k]:idx2 + 3 + 3*edge_to_col[node1,k]] += np.array([
+        #         [-edge['Vk,im']],
+        #         [ edge['Vk,re']],
+        #         [-edge['Vm,im']],
+        #         [ edge['Vm,re']]
+        #         ])                
+        
+        # for m in G.neighbors(node2):
+        #     # if m != node1:
+        #     edge = G.edges[(node2,m)]
+        #     A[idx1:idx1+4,idx2+2 + 3*edge_to_col[node2,m]:idx2 + 3 + 3*edge_to_col[node2,m]] += np.array([
+        #         [-edge['Vk,im']],
+        #         [ edge['Vk,re']],
+        #         [-edge['Vm,im']],
+        #         [ edge['Vm,re']]
+        #         ])                
+                
+       
+
+        # for node_to_row[node1]:
+        # edge_idx = rows_to_nodes(inc[:,i].nonzero()[0])
+
+
+        # for j in range(len(G.nodes)):            
+        #     # if element in incident matrix is one, then add voltages
+        #     inc[:,1].nonzero()[0]
+            
+        #     if inc[j,i] == 1:               
+        #         print(col_to_edge[j],node1,node2)
+        #         edge = G.edges[()]
+                
+        #         A[idx1:idx1+4,idx2+2 + 3*:idx2 + 3] += np.array([
+        #             [-edge['Vk,im']],
+        #             [ edge['Vk,re']],
+        #             [-edge['Vm,im']],
+        #             [ edge['Vm,re']]
+        #             ])
     
         # B[idx1:idx1+4,0] = np.array([
         #     d['Ik,re']    +   G.nodes[node1]['Ik,sh,re']/G.nodes[node1]['Vr'], 
@@ -305,6 +343,13 @@ def LSE(G,R=None):
         #     d['Im,re']    +   G.nodes[node2]['Ik,sh,re'], 
         #     d['Im,im']  ,#  +   G.nodes[node2]['Ik,sh,im'], 
         #     ])
+        
+        A[idx1:idx1+4,idx2:idx2 + M] += np.array([
+            [d['dVr'],   -d['dVi'], -d['Vk,im']],
+            [d['dVi'],    d['dVr'],  d['Vk,re']],
+            [-d['dVr'],   d['dVi'], -d['Vm,im']],
+            [-d['dVi'],  -d['dVr'],  d['Vm,re']]
+            ])
         
         B[idx1:idx1+4,0] = np.array([
             d['Ik,re'], 
