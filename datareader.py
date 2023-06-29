@@ -89,3 +89,19 @@ class DataReader:
             warnings.warn(f'{self.directory}\\{self.project_name} is not reading {signal} correctly:\nN != nfiles\n{N} != {nfiles}')
 
         return (t, y)
+
+    def get_system(self,file_addr,series='a',t_offset = 0.1,t1=-10,t2=10):
+        _, v1 = self.get_signal(f'Vabc_{series}1', file_addr)
+        _, i2 = self.get_signal(f'Iabc_{series}2', file_addr)
+        t, v2 = self.get_signal(f'Vabc_{series}2', file_addr)
+        t -= 0.1
+                
+        idxs = ((t>= t1) & (t<=t2)) 
+        t = t[idxs]
+        v1 = v1[idxs]
+        i2 = i2[idxs]
+        v2 = v2[idxs]
+        
+        return t, v1.T,i2.T,v2.T
+        
+

@@ -704,14 +704,15 @@ class MVF:
     def plot(self,f,s,fit,xmax=None,plot_err:bool=True,plot_ser:bool=True):
         diff, rms_error, ci, signal_error_ratio = self.evaluate_error(f,fit)
         
-        fig, ax = plt.subplots(2,1,dpi=200,figsize=(9,6),sharex=True)
+        fig, ax = plt.subplots(2,1,dpi=200,sharex=True) # ,figsize=(9,6)
         
         s_f = s.imag/(2*np.pi)
         
         # Magnitude plot
-        ax[0].plot(s_f, abs(f),color='blue',zorder=2)
-        ax[0].plot(s_f, abs(fit),color='lightblue',ls='--',zorder=3)
-        ax[0].set(yscale='log',ylabel='Magnitude')
+        ax[0].plot(s_f, abs(f),color='blue',zorder=2,label='$f(s)$')
+        ax[0].plot(s_f, abs(fit),color='lightblue',ls='--',zorder=3,label='$f_{fit}(s)$')
+        # ax[0].set(yscale='log',ylabel='Magnitude [$\\Omega$]')
+        ax[0].set(ylabel='Magnitude [$\\Omega$]')
         # ax[0].set(ylabel='Magnitude')
         if self.opts.plot_ci:
             ax[0].fill_between(s_f, abs(f)+(ci[0]),abs(f)-(ci[1]),alpha=0.25,color='red',zorder=5)
@@ -720,8 +721,8 @@ class MVF:
         if plot_err:
             ax0 = ax[0].twinx()
             ax0.set(yscale='log')
-            ax0.set_ylabel(f'Error: {rms_error}', color='tab:blue')
-            ax0.plot(s_f,abs(diff), color='tab:blue',alpha=0.25)
+            # ax0.set_ylabel(f'Error: {rms_error}', color='tab:blue')
+            ax0.plot(s_f,abs(diff), color='tab:blue',alpha=0.25,label='$\\varepsilon(s)$')
             ax0.tick_params(axis='y', labelcolor='tab:blue')
 
         if plot_ser:
@@ -733,18 +734,19 @@ class MVF:
             ax1.spines["right"].set_position(("axes", 1.1))
 
         # Phase plot
-        ax[1].plot(s_f, np.angle(f,deg=True),color='green',zorder=2)        
-        ax[1].plot(s_f, np.angle(fit,deg=True),color='lightgreen',ls='--',zorder=3)
+        ax[1].plot(s_f, np.angle(f,deg=True),color='green',zorder=2,label='$f(s)$')        
+        ax[1].plot(s_f, np.angle(fit,deg=True),color='lightgreen',ls='--',zorder=3,label='$f_{fit}(s)$')
         ax[1].set(xlabel='f [Hz]',ylabel='Phase [deg]')
 
         # Formatting options
         for i in range(2):
             ax[i].grid()
+            ax[i].legend(loc='upper right')
             ax[i].axhline(0,color='k',lw=0.75)
             ax[i].set(xlim=(s_f.min(),(xmax,s_f.max())[xmax is None]))
         
-        plt.show()
-        plt.close()
+        # plt.show()
+        # plt.close()
         
         return
 
@@ -776,22 +778,26 @@ def calculate_foster_network(p,r,d,h,verbose=False,plot=True):
             print(f'{k}={v}')        
     
     if plot:
-        fig, ax = plt.subplots(2,1,dpi=200,figsize=(8,6))
+        fig, ax = plt.subplots(2,1,dpi=200) # ,figsize=(8,6)
         Rs = {k:v for k,v in Z_foster.items() if k[0] == 'R'}
         Ls = {k:v for k,v in Z_foster.items() if k[0] == 'L'}
-        ax[0].bar(list(Rs.keys()),list(Rs.values()))
-        ax[1].bar(list(Ls.keys()),list(Ls.values()))        
+        ax[0].bar(list(Rs.keys()),list(Rs.values()),zorder=3)
+        ax[1].bar(list(Ls.keys()),list(Ls.values()),zorder=3)        
 
-        ax[0].set_xticklabels(list(Rs.keys()), rotation = 90, ha="center")
-        ax[1].set_xticklabels(list(Ls.keys()), rotation = 90, ha="center")
+        ax[0].set_xticklabels(list(Rs.keys()), rotation = 90, ha="center",fontsize=6)
+        ax[1].set_xticklabels(list(Ls.keys()), rotation = 90, ha="center",fontsize=6)
 
-        # for i in range(2):
-        #     ax[i].set(yscale='log')
+        ax[0].set(ylabel='[$\\Omega$]')
+        ax[1].set(ylabel='[H]')
+
+        for i in range(2):
+            ax[i].set(yscale='log')
+            ax[i].grid()
     
     return Z_foster
 
-calculate_foster_network(poles,residues,d,h,verbose=True)
-=======
+#calculate_foster_network(poles,residues,d,h,verbose=True)
+#=======
 
 #%%
 def fourier_method(p,r,t1,t2,dt=1e-6):
@@ -808,7 +814,7 @@ def fourier_method(p,r,t1,t2,dt=1e-6):
     
     return
 
-fourier_method(poles,residues,0,0.2)
+#fourier_method(poles,residues,0,0.2)
 
 #%% CALCULATED FREQUENCY RESPONSE 
 f_calc = pd.read_csv(f'data\\freq\\cable_1C_freq_calc.txt',header=0,index_col=0)
@@ -836,6 +842,8 @@ fit, SER2, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
 mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
 
 #%%
+ppath = r'C:\Users\bvilm\Dropbox\Apps\Overleaf\Special course - System identification of black-box dynamical systems\img'
+wpath = r'C:\Users\bvilm\Dropbox\Apps\Overleaf\Special course - System identification of black-box dynamical systems\tabs'
 f_fdcm = np.genfromtxt(r'data\freq\Harm_1c_fdcm.out',skip_header=1)
 f = rect_form(f_fdcm[:,1],f_fdcm[:,2])
 s = f_fdcm[:,0]*1j*2*np.pi
@@ -844,8 +852,15 @@ s = f_fdcm[:,0]*1j*2*np.pi
 mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2,plot_ser=False,plot_err=False)
 fit, SER3, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
 mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
+plt.savefig(f'{ppath}\\freq_resp_fdcm.pdf')
 
 Z_f = calculate_foster_network(poles,residues,d,h,verbose=True)
+plt.savefig(f'{ppath}\\freq_foster_fdcm.pdf')
+
+df_fdcm = pd.DataFrame({'R':[val for key, val in Z_f.items() if 'R' in key],'L':[val for key, val in Z_f.items() if 'L' in key]})
+
+df_fdcm.style.to_latex()
+df_fdcm.style.to_latex(f'{wpath}\\freq_resp_fdcm.tex',position = 'H')
 
 #%%
 f_fdcm = np.genfromtxt(r'data\freq\Harm_1c_pi.out',skip_header=1)
@@ -856,8 +871,13 @@ s = f_fdcm[:,0]*1j*2*np.pi
 mvf = MVF(rescale=True,n_iter=12,n_poles=3,asymp=2,plot_ser=False,plot_err=False)
 fit, SER4, (poles, residues, d, h), (diff, rms_error) = mvf.vectfit(f, s)
 mvf.plot(f,s,fit,xmax=2000,plot_ser=False,plot_err=True)
+plt.savefig(f'{ppath}\\freq_resp_pi.pdf')
 
 Z_f = calculate_foster_network(poles,residues,d,h,verbose=True)
+plt.savefig(f'{ppath}\\freq_foster_pi.pdf')
+
+df_pi = pd.DataFrame({'R':[val for key, val in Z_f.items() if 'R' in key],'L':[val for key, val in Z_f.items() if 'L' in key]})
+df_pi.style.to_latex(f'{wpath}\\freq_resp_pi.tex',position = 'H')
 
 #%% 3 CONDUCTORS
 f_fdcm = np.genfromtxt(r'data\cable_3c\Harm_3c.out',skip_header=1)

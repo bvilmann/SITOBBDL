@@ -74,14 +74,30 @@ if success:
     
     G, fig, ax = pf.plot_pf(bus,branch,n_pos)
     fig.tight_layout()
-    plt.show()
-    # plt.savefig(f'C:\\Users\\bvilm\\Dropbox\\Apps\\Overleaf\\46710 - Stability and control - A1\\img\\pf_graph_{phi}.pdf')
+    # plt.show()
+    plt.savefig(f'C:\\Users\\bvilm\\Dropbox\\Apps\\Overleaf\\Special course - System identification of black-box dynamical systems\\img\\pf_graph.pdf')
 
-plt.close()
-
+# plt.close()
 
 losses = abs(abs(branch['From Bus Inj.','P']) - abs(branch['To Bus Inj.','P']))
 
+
+#%%
+data = {
+        'line':[],
+        'r':[],
+        'l':[],
+        'b':[],
+        }
+for i, row in branch.iterrows():
+    line = G.edges[row['From','Bus'],row['To','Bus']]
+    data['line'].append(f'{line["k"]}-{line["m"]}')
+    data['r'].append(line['Z'].real)
+    data['l'].append(line['Z'].imag)
+    data['b'].append(line['Y'].imag)
+
+line_data = pd.DataFrame(data)
+line_data.to_excel(r'C:\Users\bvilm\PycharmProjects\SITOBB\data\pf_line_data.xlsx',header=True)
 
 #%%
 # Get undirected graph
@@ -350,7 +366,7 @@ def LSE(G,R=None):
             [-d['dVr'],   d['dVi'], -d['Vm,im']],
             [-d['dVi'],  -d['dVr'],  d['Vm,re']]
             ])
-        
+            
         B[idx1:idx1+4,0] = np.array([
             d['Ik,re'], 
             d['Ik,im'], 
@@ -372,10 +388,14 @@ def LSE(G,R=None):
     return A, X, B
 
 # X = X2
+import pandas as pd
+import scipy.stats as stats
 
+# def confidenceInterval():
 ##%% RESIDUAL ANALYSIS
-def residual_analysis(r,x,b,G, normalize=True):
-    eps_r = np.zeros(len(G.edges))
+def residual_analysis(r,x,b,G, normalize=False,yerrs=False):
+    N =len(G.edges)
+    eps_r = np.zeros(N)
     eps_x = np.zeros(len(G.edges))
     eps_b = np.zeros(len(G.edges))
     
@@ -389,15 +409,34 @@ def residual_analysis(r,x,b,G, normalize=True):
         ax[i].grid()
         ax[i].set(ylabel='$\\varepsilon_{'+['R','X','B'][i]+'}$'+f' {("[p.u.]","[%]")[normalize]}')
     
-    ax[0].bar([i for i in range(len(eps_r))],eps_r*(1,100)[normalize],zorder=3)
-    ax[1].bar([i for i in range(len(eps_r))],eps_x*(1,100)[normalize],zorder=3)
-    ax[2].bar([i for i in range(len(eps_r))],eps_b*(1,100)[normalize],zorder=3)
+    eps = np.concatenate([eps_r,eps_x,eps_b])
+    eps_df = pd.DataFrame({'r':eps[:N],'l':eps[N:2*N],'b':eps[-N:],})
+    if yerrs:
+        yerr = {}
+        for i, col in enumerate(eps_df.columns):
+            std_residual = (eps_df[col]*100).std()
+            margin_error = std_residual * stats.norm.ppf(0.975) # 95% CI, so 0.975 (which is 1 - (1 - 0.95)/2)
+            yerr[col] = margin_error
+    
+        ax[0].bar([i for i in range(len(eps_r))],eps_r*(1,100)[normalize],zorder=3,yerr=yerr['r'],capsize=3)
+        ax[1].bar([i for i in range(len(eps_r))],eps_x*(1,100)[normalize],zorder=3,yerr=yerr['l'],capsize=3)
+        ax[2].bar([i for i in range(len(eps_r))],eps_b*(1,100)[normalize],zorder=3,yerr=yerr['b'],capsize=3)
+    else:
+        ax[0].bar([i for i in range(len(eps_r))],eps_r*(1,100)[normalize],zorder=3)
+        ax[1].bar([i for i in range(len(eps_r))],eps_x*(1,100)[normalize],zorder=3)
+        ax[2].bar([i for i in range(len(eps_r))],eps_b*(1,100)[normalize],zorder=3)
+        
     
     ax[2].set_xticks([i for i in range(len(eps_r))])
     ax[2].set_xticklabels([str(list(G.edges)[i]) for i in range(len(G.edges))])
     ax[2].set_xlabel('Lines')
 
-    eps = np.concatenate([eps_r,eps_x,eps_b])
+
+    fig.tight_layout()
+
+
+
+    plt.savefig(f'C:\\Users\\bvilm\\Dropbox\\Apps\\Overleaf\\Special course - System identification of black-box dynamical systems\\img\\pf_estimations_{normalize}.pdf')
 
     return eps
 
@@ -412,14 +451,47 @@ ax.imshow(np.where(abs(np.hstack([A,B]))!=0,abs(np.hstack([A,B])),np.nan))
 # ax.axvline(len(G.nodes)*2+len(G.edges)*3-0.5,color='k',lw=0.75)
 ax.axvline(len(G.edges)*3-0.5,color='k',lw=0.75)
 
-
 Z = np.array([1/complex(r,xl) for r,xl in zip(X[::3],X[1::3])])
 r = np.real(Z)
 x = np.imag(Z)
 y = np.array([complex(0,y_) for y_ in X[2::3]])
 b = np.imag(y)
+fig.tight_layout()
+ax.set(xlabel='index',ylabel='index')
+plt.savefig(f'C:\\Users\\bvilm\\Dropbox\\Apps\\Overleaf\\Special course - System identification of black-box dynamical systems\\img\\pf_matrix.pdf')
 
 eps1 = residual_analysis(r,x,b,G)
+
+
+#%%
+
+data = {
+        'Line':[],
+        'R_{True}':[],
+        'R_{Est.}':[],
+        'X_{True}':[],
+        'X_{Est.}':[],
+        'B_{True}':[],
+        'B_{Est.}':[],
+        }
+cnt = 0
+
+for i, (node1, node2, d) in enumerate(G.edges.data()):
+    line = d
+    data['Line'].append(f'({line["k"]},{line["m"]})')
+    data['R_{True}'].append(line['Z'].real)
+    data['X_{True}'].append(line['Z'].imag)
+    data['B_{True}'].append(line['Y'].imag)
+    data['R_{Est.}'].append(r[cnt])
+    data['X_{Est.}'].append(x[cnt])
+    data['B_{Est.}'].append(b[cnt])
+    
+    cnt += 1 
+
+line_data = pd.DataFrame(data)
+
+line_data.to_excel(r'C:\Users\bvilm\PycharmProjects\SITOBB\data\pf_line_data_estimated.xlsx',header=True)
+
 
 #%% ==================== WEIGHTED LEAST SQUARES ==================== 
 def WLS(X, Y, W):
@@ -589,9 +661,7 @@ for _ in range(1000):
 print(rls.beta)  # Should be close to [2, -3]
 print(B.ravel())  # Should be close to [2, -3]
 
-
 #%%
-
 
 # def LSE_(x, H, z_hx, W=None, tol=1e-6, max_iter=1000):
 #     """

@@ -128,7 +128,7 @@ name = "_".join(opt_params)
 df = pd.DataFrame({name:ests},index=opt_params)
 
 w_path = r'C:\Users\bvilm\PycharmProjects\SITOBB\data\estimation results'
-df.to_excel(f'{w_path}\\MLE_1c_all_params_{name}.xlsx',header=True,index=True)
+df.to_excel(f'{w_path}\\MLE_1c_all_params_pde{name}.xlsx',header=True,index=True)
 
 #%%
 params.update(dict(res['Estimated']*m.p.Zbase))

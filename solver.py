@@ -178,6 +178,8 @@ class SITOBBDS:
         elif isinstance(model,str) and model == 'c1_s0_o3':
             # ------ Single core, no screen, 3rd order ------ 
             self.n = n = 3
+            p.C1 = p.C2 = p.C
+
             A = np.array([[-p.R/p.L, 1/p.L, -1/p.L],
                             [-1/(p.C1), -1/(p.Rin * p.C1), 0],
                             [1/(p.C2), 0, 0],
@@ -190,6 +192,7 @@ class SITOBBDS:
         elif isinstance(model,str) and model == 'c1_s0_o3_load':
             # ------ Single core, no screen, 3rd order ------             
             self.n = n = 3
+            p.C1 = p.C2 = p.C
             A = np.array([[-p.R/p.L, 1/p.L, -1/p.L],
                             [-1/(p.C1), -1/(p.Rin * p.C1), 0],
                             [1/(p.C2), 0, -1/(p.Rload*p.C2)],

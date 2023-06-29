@@ -29,7 +29,7 @@ params= {'Rin':100,'V':1,'Vbase':66e3,'Rload': 1e6,'phi':np.pi/4}
 dt = 10e-6
 
 t1 = -1e-4
-t2 = 0.02
+t2 = 0.04
 t = np.arange(t1,t2+dt,dt)
 
 # Initial conditions
@@ -75,7 +75,8 @@ opts = {'method':'SLSQP',
 
 opts = {'jac':'2-point',
         # 'epsilon':1e-5,
-        'method':'L-BFGS-B'
+        # 'method':'L-BFGS-B'
+        'method':'BFGS'
         # 'method':'BFGS'
         }
 
@@ -95,7 +96,8 @@ m.get_model(model,discretize=True,dt=10e-6,params=params,pu=True)
     
 # Create input
 u, uk = m.create_input(t1, t2, dt,mode='sin')        
-Sx = m.create_noise(t1, t2, dt,amp=.01,dim=n,seed=1234)
+Sx = m.create_noise(t1, t2, dt,amp=.001,dim=n,seed=1234)*0
+Sy = m.create_noise(t1, t2, dt,amp=.01,dim=n,seed=1234)*1
 # Sy = m.create_noise(t1, t2, dt,amp=.01,dim=n,seed=1235)
 # Sx = None         
 
@@ -104,7 +106,7 @@ Ad, Bd, A, B, C, D = m.A_d,m.B_d,m.A,m.B,m.C,m.D
 
 #%% --------------- GET GROUND TRUTH --------------- 
 # Simulate the system
-x, y = m.simulate(Ad,Bd,C,D,x0,uk,t1,t2,dt,Sx=Sx)
+x, y = m.simulate(Ad,Bd,C,D,x0,uk,t1,t2,dt,Sx=Sx,Sy=Sy)
 
 m.plot_simulations(t, [y],labels=['$y$'])
 
@@ -113,14 +115,18 @@ m.plot_simulations(t, [y],labels=['$y$'])
 
 #%%
 # Identification of the parameter space
-# opt_params  = ['R','Rin','Rload']
+opt_params  = ['R','Rin']
 # opt_params  = ['Rload']
-opt_params  = ['R','Rin','Rload','L','C']
+# opt_params  = ['Rin','Rload','R','L','C']
+# opt_params  = ['Rin','Rload','R','L','C','G']
+# opt_params  = ['R','L','C','G']
+# opt_params  = ['R','L']
+# opt_params  = ['Rload']
 # opt_params  = ['R','Rload','L','C']
 # opt_params  = ['L','C']
 # opt_params  = ['Rload']
 # thetahat0 = [m.p.params[k] for k in opt_params]
-thetahat0 = [1e-4 for k in opt_params]
+thetahat0 = [abs(np.random.randn()*1e-4) for k in opt_params]
 # thetahat0 = None
 
 ests, thetahat, res, A_hat = m.ML_opt_param(opt_params,A,B,C,D,x0, uk, y, R0, R1, R2, t1, t2, dt, thetahat0=thetahat0,log=True)
@@ -132,8 +138,24 @@ w_path = r'C:\Users\bvilm\PycharmProjects\SITOBB\data\estimation results'
 df.to_excel(f'{w_path}\\MLE_1c_all_params_{name}.xlsx',header=True,index=True)
 
 #%%
+import seaborn as sns
+fig, ax = plt.subplots(1,1,dpi=150)
+plt.imshow(thetahat.hess_inv)
+# plt.figure(figsize=(10,7))
+sns.heatmap(thetahat.hess_inv, annot=True, fmt=".2f", cmap='viridis', cbar=True, annot_kws={"color":'white'}, xticklabels=opt_params, yticklabels=opt_params)
+
+# ax.set(xticklabels=opt_params,yticklabels=opt_params,xticks=[i for i in range(len(opt_params))],yticks=[i for i in range(len(opt_params))])
+fig.tight_layout()
+# plt.show()
+
+w_path = r'C:\Users\bvilm\Dropbox\Apps\Overleaf\Special course - System identification of black-box dynamical systems\img'
+plt.savefig(f'{w_path}\\MLE_COV_{opt_params}.pdf')
+
+#%%
 params.update(dict(res['Estimated']*m.p.Zbase))
+
 m = SITOBBDS()
+
 m.get_model(model,discretize=True,dt=10e-6,params=params,pu=True)
     
 # Create input
