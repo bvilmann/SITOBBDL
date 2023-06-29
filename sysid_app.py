@@ -19,12 +19,12 @@ import linecache
 # Control systems
 from control import obsv
 
-# Default 
-plt.rcParams.update({'lines.markeredgewidth': 1})
-plt.rcParams.update({'font.size':18})
+# # Default 
+# plt.rcParams.update({'lines.markeredgewidth': 1})
+# plt.rcParams.update({'font.size':18})
+# # plt.rcParams['text.usetex'] = False
 # plt.rcParams['text.usetex'] = False
-plt.rcParams['text.usetex'] = False
-plt.rcParams['text.latex.preamble'] = r"\usepackage{bm} \usepackage{amsmath} \usepackage{amssymb}"
+# plt.rcParams['text.latex.preamble'] = r"\usepackage{bm} \usepackage{amsmath} \usepackage{amssymb}"
 prop_cycle = plt.rcParams['axes.prop_cycle']
 clrs = prop_cycle.by_key()['color']
 
@@ -36,7 +36,7 @@ import SITOBBDS_utils as utils
 from numerical_methods import NumericalMethods
 import datetime
 import copy
-
+import os
 import pandas as pd
 
 def get_machine_precision(show=True):
@@ -60,8 +60,11 @@ def get_machine_precision(show=True):
 #     def __get__(self):
 #         return self.val
 
+
+
 class ParamWrapper:
-    def __init__(self,params,model,pu:bool=True):
+    
+    def __init__(self,params,model,pu:bool=True,seq=False):
         # ------ Load default system parameters ------
         self.Vbase = 66e3
         self.Sbase = 100e6
@@ -71,38 +74,87 @@ class ParamWrapper:
         self.omega = 2*np.pi*self.f
         self.phi = 0
 
-        designed_models = ['c1_s0_o3','c1_s0_o3_load','c1_s0_o2','c1_s0_o2_load','c1_s0_o2_ZY','c1_s0_o3_load1','c1_s0_o3_load2','c1_s0_pde_load']
-
-        
+        designed_models = ['c1_s0_o3','c1_s0_o3_load','c1_s0_o3_load_test','c1_s0_o2','c1_s0_o2_load','c1_s0_o2_ZY','c1_s0_o3_load1','c1_s0_o3_load2','c1_s0_pde_load']
+       
         alpha = np.exp(2/3*np.pi*1j)
 
         self.T_seq = np.array([[1, 1,           1],
                                [1, alpha**2,    alpha],
                                [1, alpha,       alpha**2]])
 
+        # ------ Load model default parameters 1-conductor system ------
+        self.Rin = 0.05 # BRK = 0.05
 
-
-        # ------ Load model default parameters ------
-        if model in designed_models:
-            self.params = ['Rin','Rload','R','L','C']
+        self.Rload = 200 # BRK = 0.05
+        if model in designed_models and 'test' not in model and 'grid' not in model:
+            self.params = ['Rin','Rload','R','L','C','G']
             #self.params = ['Rin','Rload','R','L','C1','C2']
-            self.R = 1
-            self.Rin = 0.05 # BRK = 0.05
-            self.Rload = 100 # BRK = 0.05
-            self.L = 1e-3
-            self.C = 0.5e-6
-            self.G = 0.5e-6
+            self.R = 5.50451976 # 0.5
+            self.L = 0.575768561E+02/self.omega # 1e-3
+            self.C = 0.585164562E-02/self.omega/2 # / 2 # 1e-6/2
+            self.G = 0.179068548E-04/2 # 0 => G= 1
             self.C1 = self.C
             self.C2 = self.C
-            
-        elif model == 'Cable_2':
-            self.n = n = 7
-            self.Z, self.Y = self.load_cable_data('data', model, n)
+        elif model in designed_models and 'test' in model:
+            self.params = ['Rin','Rload','R','L','C','G']
+            #self.params = ['Rin','Rload','R','L','C1','C2']
+            self.R = 0.5 # 0.5
+            self.L = 1e-3/self.omega # 1e-3
+            self.C = 1e-6 # / 2 # 1e-6/2
+            self.G = 0 # 0 => G= 1
+            self.C1 = self.C
+            self.C2 = self.C
+
+           
+        else:
+            if seq:
+                self.params = [f'{ABC}{i}' for ABC in ['R','L','G','C'] for i in range(3)] + ['Rin','Rload']
+    
+                self.n = n = 3
+                path = os.path.abspath(os.path.join(os.getcwd(), os.pardir)) + f'\\data\\{model}'
+                self.Z, self.Y = self.load_cable_data(path, model, 3)
+                for i, idx in enumerate([0,1,2]):
+                    setattr(self,f'R{idx}',self.Z_seq[i,i].real)
+                    setattr(self,f'L{idx}',self.Z_seq[i,i].imag / self.omega )
+                    setattr(self,f'G{idx}',self.Y_seq[i,i].real )
+                    setattr(self,f'C{idx}',self.Y_seq[i,i].imag / self.omega)
+
+            else:
+                self.params = [f'{ABC}{i}{j}' for ABC in ['R','L','G','C'] for i in range(3) for j in range(3)] + ['Rin']
+    
+                if 'grid' in model:
+                    self.SCR = 10
+                    self.XR = 10
+                    self.Zg = self.Vbase**2/(self.SCR*self.Sbase)
+                    theta = np.arctan(self.XR)
+                    self.Rg = self.Zg * np.cos(theta)
+                    self.Xg = self.Zg * np.sin(theta)
+                    self.Lg = self.Xg/self.omega
+                    self.params += ['SCR','XR','Rg','Lg']
+                else:
+                    self.params += ['Rload']
+                    
+    
+                self.n = n = 3
+                path = os.path.abspath(os.path.join(os.getcwd(), os.pardir)) + f'\\data\\{model}'
+                self.Z, self.Y = self.load_cable_data(path, model, 3)
+                for i in range(3):
+                    for j in range(3):                        
+                        setattr(self,f'R{i}{j}',self.Z[i,j].real)
+                        setattr(self,f'L{i}{j}',self.Z[i,j].imag / self.omega)
+                        setattr(self,f'G{i}{j}',self.Y[i,j].real)
+                        setattr(self,f'C{i}{j}',self.Y[i,j].imag / self.omega)
 
         # ------ Get custom parameters ------
         if params is not None:
             for k, v in params.items():
                 setattr(self,k,v)
+        
+        if ('SCR' in params.keys() or 'XR' in params.keys()) and 'grid' in model:
+            rg, xg, lg = self.calculate_grid_impedance(self.SCR, self.XR)
+            self.Rg = rg
+            self.Xg = xg
+            self.Lg = lg
 
         # ------ Per unitizing ------
         if pu:
@@ -110,22 +162,37 @@ class ParamWrapper:
             self.Zbase = self.Vbase**2 / self.Sbase           
     
             # Adjusting 
-            if model in designed_models:
-                for k in self.params:
+            # TODO: HANDLE THIS CONTROL FLOW PROPERLY FOR CABLE SYSTEMS!
+            # if model in designed_models:
+            for k in self.params:
+                if k not in ['SCR','XR']:
+                    # print(k,getattr(self, k),getattr(self, k)/self.Zbase)
                     setattr(self, k, getattr(self, k)/self.Zbase)
 
         # ------ Converting param list into dict ------
         #
-        if model in designed_models:
-            data = {}
-            for p in self.params:
-                data[p] = getattr(self, p)
-            self.params = data
+        # if model in designed_models:
+        data = {}
+        for p in self.params:
+            
+            data[p] = getattr(self, p)
+        self.params = data
         return
 
-    
+    def calculate_grid_impedance(self,scr,xr):
+        self.Zg = Zg = self.Vbase**2/(scr*self.Sbase)
+        theta = np.arctan(xr)
+        rg = Zg * np.cos(theta)
+        xg = Zg * np.sin(theta)
+        lg = self.Xg/self.omega    
+        
+        return rg, xg, lg
+
     def load_cable_data(self,path, file, n_conductors, mode: int = 0):
         n = n_conductors
+        if 'grid' in file:
+            file = file[:-5]
+            path = path[:-5]
         fpath = f'{path}\\{file}.out'
         
         select_mode = ['LONG-LINE CORRECTED ',
@@ -135,13 +202,16 @@ class ParamWrapper:
         z_searchword = f'{select_mode}SERIES IMPEDANCE MATRIX'.replace(('','SERIES ')[select_mode == 'SEQUENCE '],'')
         y_searchword = f'{select_mode}SHUNT ADMITTANCE MATRIX'.replace(('','SHUNT ')[select_mode == 'SEQUENCE '],'')
 
+        z_searchword = f'LONG-LINE CORRECTED SERIES IMPEDANCE MATRIX'
+        y_searchword = f'LONG-LINE CORRECTED SHUNT ADMITTANCE MATRIX'
+        
         conv = {0: lambda x: str(x)}
 
         # df = pd.read_csv(fpath, skiprows=59,nrows=n,converters=conv)
         Z = np.zeros((n,n),dtype=np.complex128)
         Y = np.zeros((n,n),dtype=np.complex128)
 
-        print(z_searchword,y_searchword)
+        print(z_searchword,y_searchword,fpath)
 
         with open(fpath,'r') as f:
             for i, line in enumerate(f):
@@ -166,12 +236,15 @@ class ParamWrapper:
 
             zline += 1
             yline += 1
+            
+        # print('Z\n',Z)
+        # print('Y\n',Y)
 
         if select_mode != 'SEQUENCE ':
             self.Z_ph = Z
             self.Y_ph = Y
-            self.z_ph = Z/self.Zbase
-            self.y_ph = Y/self.Zbase
+            # self.z_ph = Z/self.Zbase
+            # self.y_ph = Y/self.Zbase
             self.Z_seq = inv(self.T_seq) @ Z @ self.T_seq
             self.Y_seq = inv(self.T_seq) @ Y @ self.T_seq
 
@@ -200,7 +273,7 @@ class OptionWrapper:
         return
 
 class SITOBBDS:
-    def __init__(self,opts:dict=None):
+    def __init__(self,opts:dict=None,N_pi=1):
         self.method = NumericalMethods()
         self.models = ['c1_s0_o3',
                        'c1_s0_o3_load',
@@ -208,10 +281,14 @@ class SITOBBDS:
                        'Cable_2']
 
         self.opts = OptionWrapper(opts)
+        self.opt_params = None
+        self.MLE_silence = False
+        self.N_pi = N_pi
         
+
         return
         
-    def load_model(self,model=None,p=None,verbose:bool = False):
+    def load_model(self,model=None,p=None,verbose:bool = False, seq=False):
         if model is None: model = self.model
         # if p is None: p = self.p
         if p is None: p = copy.deepcopy(self.p)
@@ -227,6 +304,7 @@ class SITOBBDS:
             # ------ Single core, no screen, 3rd order ------ 
             self.n = n = 3
             p.C1 = p.C2 = p.C
+            
 
             A = np.array([[-p.R/p.L, 1/p.L, -1/p.L],
                             [-1/(p.C1), -1/(p.Rin * p.C1), 0],
@@ -238,17 +316,54 @@ class SITOBBDS:
             D = np.zeros(1)
 
         elif isinstance(model,str) and model == 'c1_s0_o3_load':
-            # ------ Single core, no screen, 3rd order ------             
+            # ------ Single core, no screen, 3rd order ------   
             self.n = n = 3
-            p.C1 = p.C2 = p.C
+            G = p.G
+            Gk = p.G + 1/p.Rin            
+            Gk = 1/p.Rin            
+            Gm = p.G + 1/p.Rload   
+            Gm = 1/p.Rload   
 
+            # A = np.array([
+            #                 [-1/(p.Rin * p.C1), -1/(p.C1), 0],
+            #                 [1/p.L, -p.R/p.L, -1/p.L],
+            #                 [0, 1/(p.C2), -1/(p.Rload*p.C2)],
+            #               ])
+            
             A = np.array([
-                            [-1/(p.Rin * p.C1), -1/(p.C1), 0],
+                            [-Gk/p.C, -1/p.C, 0],
                             [1/p.L, -p.R/p.L, -1/p.L],
-                            [0, 1/(p.C2), -1/(p.Rload*p.C2)],
+                            [0, 1/p.C, -Gm/p.C],
                           ])
             
-            B = np.array([[1 / (p.Rin * p.C1)], [0], [0]])
+            B = np.array([[Gk / p.C], [(p.R)/p.L], [0]])
+            # B = np.array([[1 / (p.C)], [0], [0]])
+            C = np.eye(n)
+            D = np.zeros(1)
+            
+        elif isinstance(model,str) and model == 'c1_s0_o3_load_test':
+            # ------ Single core, no screen, 3rd order ------   
+            self.n = n = 3
+            G = p.G
+            Gk = p.G + 1/p.Rin            
+            Gk = 1/p.Rin            
+            Gm = p.G + 1/p.Rload   
+            Gm = 1/p.Rload   
+
+            # A = np.array([
+            #                 [-1/(p.Rin * p.C1), -1/(p.C1), 0],
+            #                 [1/p.L, -p.R/p.L, -1/p.L],
+            #                 [0, 1/(p.C2), -1/(p.Rload*p.C2)],
+            #               ])
+            
+            A = np.array([
+                            [-Gk/p.C, -1/p.C, 0],
+                            [1/p.L, -p.R/p.L, -1/p.L],
+                            [0, 1/p.C, -Gm/p.C],
+                          ])
+            
+            B = np.array([[Gk / p.C], [(p.R)/p.L], [0]])
+            # B = np.array([[1 / (p.C)], [0], [0]])
             C = np.eye(n)
             D = np.zeros(1)
             
@@ -284,59 +399,17 @@ class SITOBBDS:
             D = np.zeros(1)            
 
 
-        elif isinstance(model,str) and model == 'c1_s0_o3_ZY':
-            # ------ Single core, no screen, 2nd order, two-port-network ------             
-            self.n = n = 8
-            zs = p.R + 1j*p.omega*p.L
-            zp1 = 0 + 1/(1j*p.omega*p.C1)
-            zp2 = 0 + 1/(1j*p.omega*p.C2)
-            ys  = 1/zs
-            yp1 = 1/zp1
-            yp2 = 1/zp2
-            gamma = np.sqrt(yp1*zs)
-            z0 = np.sqrt(zs/yp1)            
-
-            Y = np.array([[ys+yp1, -ys],
-                          [-ys, ys+yp2]])
-            Z = inv(Y)
-            
-            Za = np.vstack((np.hstack((Z.real, -Z.imag)),
-                           np.hstack((Z.imag, Z.real))))
-            Ya = np.vstack((np.hstack((Y.real, -Y.imag)),
-                           np.hstack((Y.imag, Y.real))))
-
-            Zero = np.zeros_like(Za)
-
-            A = np.vstack((np.hstack((Ya, -Za)),
-                           np.hstack((-Ya, Za))))
-
-            B = np.zeros((n,2))
-            B[0,0] = B[1,1] = 1
-            C = np.eye(n)*np.diag(np.array([(1,-1)[i==6 or i==7] for i in range(n)]))
-            D = np.zeros(1)
-
-        elif isinstance(model,str) and model == 'dummy1':
-            # ------ Single core, no screen, 3rd order ------ 
-            self.n = n = 3
-            A = np.array([[-1/1, 1, -1/1],
-                            [-1/(1), -1/(1), 0],
-                            [1/(1), 0, -1/(1)],
-                          ])
-            
-            B = np.array([[0], [1 / (1)], [0]])
-            C = np.eye(n)
-            D = np.zeros(1)
-
-
         elif isinstance(model,str) and model == 'c1_s0_o2':
             # ------ Single core, no screen, 2rd order ------ 
             self.n = n = 2
             A = np.array([[-p.R/p.L,-1/(p.L)],
                           [1/(p.C2),0]])
+
             B = np.array([[1/p.L],[0]])
 
             C = np.eye(n)
             D = np.zeros(1)
+            
         elif isinstance(model,str) and model == 'c1_s0_o2_load':
             # ------ Single core, no screen, 2rd order ------ 
             self.n = n = 2
@@ -347,14 +420,283 @@ class SITOBBDS:
             C = np.eye(n)
             D = np.zeros(1)
 
-        else:
-            import os
-            path = os.path.abspath(os.path.join(os.getcwd(), os.pardir)) + r'\data'
-            self.n = n = 3
-            self.p.load_cable_data(path, model, n)
-                        
+            self.n = n = 2
+            G = p.G
+            Gk = p.G + 1/p.Rin            
+            Gk = 1/p.Rin            
+            Gm = p.G + 1/p.Rload   
+            # Gm = 0
+
+            # A = np.array([
+            #                 [-1/(p.Rin * p.C1), -1/(p.C1), 0],
+            #                 [1/p.L, -p.R/p.L, -1/p.L],
+            #                 [0, 1/(p.C2), -1/(p.Rload*p.C2)],
+            #               ])
+            
+            A = np.array([
+                            [-p.R/p.L, -1/p.L],
+                            [1/p.C, -Gm/p.C],
+                          ])
+            
+            B = np.array([[1/p.L], [0]])
+            # B = np.array([[1 / (p.C)], [0], [0]])
             C = np.eye(n)
             D = np.zeros(1)
+
+
+        elif 'grid' in model:
+            if self.opt_params is not None:
+                if len([k for k in self.opt_params if k in ['SCR','XR']]) >= 1:
+                    Rg, xg, Lg = p.calculate_grid_impedance(p.SCR,p.XR)
+                    Lg = max(1e-9,Lg)
+
+                else:
+                    Rg = p.Rg
+                    Lg = max(1e-9,p.Lg)
+            else:
+                Rg = p.Rg
+                Lg = max(1e-9,p.Lg)
+            
+            N_phi = 3
+            N_pi = 100
+            self.n = n = 12
+
+            # Prepare matrices
+            A = np.zeros((n,n))
+            B = np.zeros((n,6))              
+            I = np.eye(3)
+
+            # Impedance 
+            Gin = I*1/p.Rin
+            Gload = I*1/p.Rload
+            Rin = I*p.Rin
+            Gin = I*1/p.Rin
+            Rgrid = I*Rg
+            Lgrid = I*Lg
+            R = np.zeros((3,3))
+            L = np.zeros((3,3))
+            Gk = np.zeros((3,3))
+            Gm = np.zeros((3,3))
+            Ck = np.zeros((3,3))
+            Cm = np.zeros((3,3))
+            C = np.zeros((3,3))
+            G = np.zeros((3,3))
+                                            
+            for i in range(N_phi):
+                for j in range(N_phi):
+                    if i == j:
+                        R[i,j]  = getattr(p, f'R00')/N_pi
+                        L[i,j]  = getattr(p, f'L00')/N_pi
+                        Gk[i,j] = getattr(p, f'G00')/N_pi + Gin[i,j]
+                        Gm[i,j] = getattr(p, f'G00')/N_pi
+                        G[i,j]  = getattr(p, f'G00')/N_pi 
+                        Ck[i,j] = getattr(p, f'C00')/N_pi
+                        Cm[i,j] = getattr(p, f'C00')/N_pi
+                        C[i,j]  = getattr(p, f'C00')/N_pi 
+                        
+                    else:
+                        R[i,j]  = getattr(p, f'R01')/N_pi
+                        L[i,j]  = getattr(p, f'L01')/N_pi
+                        Gk[i,j] = getattr(p, f'G01')/N_pi
+                        Gm[i,j] = getattr(p, f'G01')/N_pi
+                        G[i,j]  = getattr(p, f'G01')/N_pi
+                        Ck[i,j] = getattr(p, f'C01')/N_pi
+                        Cm[i,j] = getattr(p, f'C01')/N_pi
+                        C[i,j]  = getattr(p, f'C01')/N_pi
+
+            # Constructing system matrix A
+            # Vk
+            A[0:3,0:3] = -inv(C) @ Gk 
+            A[0:3,3:6] = -inv(C)
+            A[0:3,6:9] = 0
+            A[0:3,9:12] = 0
+
+            # ikm
+            A[3:6,0:3] = inv(L)
+            A[3:6,3:6] = -inv(L) @ R 
+            A[3:6,6:9] = -inv(L) 
+            A[3:6,9:12] = 0
+
+            # Vm
+            A[6:9,0:3] = 0
+            A[6:9,3:6] = inv(C)   #@ T.T
+            A[6:9,6:9] = -inv(C) @ Gm
+            A[6:9,9:12] = -inv(C)
+
+            # Igrid
+            A[9:12,0:3] = 0
+            A[9:12,3:6] = 0   #@ T.T
+            A[9:12,6:9] = inv(Lgrid) 
+            A[9:12,9:12] = -inv(Lgrid) @ Rgrid
+
+            
+            # Construct input matrix B
+            B[:3,:3] = inv(C) @ (Gk) # 
+            B[3:6,:3] = -inv(Lgrid)
+            B[9:12,3:6] = inv(Lgrid)
+
+            # Reduce
+            B[9:12,:3] = -inv(Lgrid)
+            B[9:12,3:6] = inv(Lgrid)
+            A = A[9:12,9:12]
+            B = B[9:12,:]
+            self.n = n = 3
+            
+            C = np.eye(n)
+            D = np.zeros(1)
+
+            
+        else:
+            
+            if not self.MLE_silence: print(self.N_pi)
+            N_pi = self.N_pi
+            N_phi = 3
+            
+            self.n = n = N_phi* (1 + 2 * N_pi)
+            # self.n = n = 9 + 2*3 
+
+            # Prepare matrices
+            A = np.zeros((n,n))
+            B = np.zeros((n,3))              
+            I = np.eye(3)
+
+            # Impedance 
+            Gin = I*1/p.Rin
+            Gload = I*1/p.Rload
+            Rin = I*p.Rin
+            Rload = I*p.Rload
+            R = np.zeros((3,3))
+            L = np.zeros((3,3))
+            Gk = np.zeros((3,3))
+            Gm = np.zeros((3,3))
+            Ck = np.zeros((3,3))
+            Cm = np.zeros((3,3))
+            C = np.zeros((3,3))
+            G = np.zeros((3,3))
+                                            
+            for i in range(N_phi):
+                for j in range(N_phi):
+                    if i == j:
+                        R[i,j]  = getattr(p, f'R00')/N_pi
+                        L[i,j]  = getattr(p, f'L00')/N_pi
+                        Gk[i,j] = getattr(p, f'G00')/N_pi + Gin[i,j]
+                        Gm[i,j] = getattr(p, f'G00')/N_pi + Gload[i,j]
+                        G[i,j]  = getattr(p, f'G00')/N_pi 
+                        Ck[i,j] = getattr(p, f'C00')/N_pi
+                        Cm[i,j] = getattr(p, f'C00')/N_pi
+                        C[i,j]  = getattr(p, f'C00')/N_pi 
+                        
+                    else:
+                        R[i,j]  = getattr(p, f'R01')/N_pi
+                        L[i,j]  = getattr(p, f'L01')/N_pi
+                        Gk[i,j] = getattr(p, f'G01')/N_pi
+                        Gm[i,j] = getattr(p, f'G01')/N_pi
+                        G[i,j]  = getattr(p, f'G01')/N_pi
+                        Ck[i,j] = getattr(p, f'C01')/N_pi
+                        Cm[i,j] = getattr(p, f'C01')/N_pi
+                        C[i,j]  = getattr(p, f'C01')/N_pi
+
+            if N_pi > 1:
+                for i in range(0,2*N_pi + 1,2):
+                    # Check if start
+                    if i == 0:
+                        start = True
+                        c  = C 
+                        gk = G + Gin
+                    else: 
+                        c  = C
+                        gk = G 
+                        start = False
+
+                    # Check if end
+                    if i == 2*N_pi:
+                        end = True
+                        c  = C
+                        gm = G + Gload 
+                    else:
+                        c  = C
+                        end = False
+                    if not self.MLE_silence: print(n,i,2*N_pi,i*N_phi,start,end)
+
+                    # Constructing system matrix A
+                    # Vk
+                    if not end:
+                        A[i*N_phi+0*N_phi:i*N_phi+1*N_phi,i*N_phi+0*N_phi:i*N_phi+1*N_phi] = -inv(c) @ gk 
+                        A[i*N_phi+0*N_phi:i*N_phi+1*N_phi,i*N_phi+1*N_phi:i*N_phi+2*N_phi] = -inv(c)
+                        A[i*N_phi+0*N_phi:i*N_phi+1*N_phi,i*N_phi+2*N_phi:i*N_phi+3*N_phi] = 0
+        
+                        # ikm
+                        
+                        A[i*N_phi+1*N_phi:i*N_phi+2*N_phi,i*N_phi+0*N_phi:i*N_phi+1*N_phi] = inv(L)
+                        A[i*N_phi+1*N_phi:i*N_phi+2*N_phi,i*N_phi+1*N_phi:i*N_phi+2*N_phi] = -inv(L) @ R 
+                        A[i*N_phi+1*N_phi:i*N_phi+2*N_phi,i*N_phi+2*N_phi:i*N_phi+3*N_phi] = -inv(L) 
+        
+                        # Vm
+                        A[i*N_phi+2*N_phi:i*N_phi+3*N_phi,i*N_phi+0*N_phi:i*N_phi+1*N_phi] = 0
+                        A[i*N_phi+2*N_phi:i*N_phi+3*N_phi,i*N_phi+1*N_phi:i*N_phi+2*N_phi] = inv(c)   #@ T.T
+                    else:
+                        A[i*N_phi+0*N_phi:i*N_phi+1*N_phi,i*N_phi+0*N_phi:i*N_phi+1*N_phi] = -inv(c) @ gm
+                        # A[i*N_phi+2*N_phi:i*N_phi+3*N_phi,i*N_phi+2*N_phi:i*N_phi+3*N_phi] = -inv(c) @ gm
+                    
+                # Construct input matrix B
+                B[:N_phi,:N_phi] = inv(C) @ (Gk) # 
+                B[N_phi:2*N_phi,:N_phi] = inv(L) @ R
+ 
+                # C = np.zeros((9,n))                           
+                # C[0:3,0:3] = np.eye(3)
+                # C[3:,-6:] = np.eye(6)
+                # C = np.zeros((9,n))                           
+                C = np.eye(n)
+                D = np.zeros(1)
+                            
+            else:
+                # Constructing system matrix A
+                # Vk
+                A[0:3,0:3] = -inv(C) @ Gk 
+                A[0:3,3:6] = -inv(C)# - inv(C) @ Gk @ R
+                A[0:3,6:9] = 0
+
+                # ikm
+                A[3:6,0:3] = inv(L)# + inv(L) @ R @ Gk 
+                A[3:6,3:6] = -inv(L) @ R 
+                A[3:6,6:9] = -inv(L) #- inv(L) @ R @ Gm 
+
+                # Vm
+                A[6:9,0:3] = 0
+                A[6:9,3:6] = inv(C) # + inv(C) @ Gk @ R #@ T.T
+                A[6:9,6:9] = -inv(C) @ Gm
+                
+                # Construct input matrix B
+                B[:3,:3] = inv(C) @ Gk # 
+                B[3:6,:3] = inv(L) @ R
+
+                C = np.eye(n)
+                D = np.zeros(1)
+
+            
+            # Constructing system matrix A
+            # A = np.zeros((n,n))
+            # B = np.zeros((n,3))              
+
+            # # Vk
+            # A[0:3,0:3] = -inv(C) @ Gk
+            # A[0:3,3:6] = -inv(C) @ (I + inv(R))
+            # A[0:3,6:9] = 0
+
+            # # ikm
+            # A[3:6,0:3] = inv(L) @ (I + R)
+            # A[3:6,3:6] = -inv(L) @ R 
+            # A[3:6,6:9] = -inv(L) @ I
+
+            # # Vm
+            # A[6:9,0:3] = 0
+            # A[6:9,3:6] = inv(C) @ (I) 
+            # A[6:9,6:9] = -inv(C) @ Gm
+            
+            # # Construct input matrix B
+            # B[:3,:3] = inv(C) @ (Gk) # 
+            # # B[3:6,:3] = inv(L) @ R
+                
 
         if verbose:
             print(A,B,C,D,sep='\n')
@@ -367,7 +709,8 @@ class SITOBBDS:
                    dt:float=None,
                    params:dict=None,
                    pu:bool=True,
-                   silence=False):
+                   silence=False,
+                   seq=False):
         """
         :param model:
         :param discretize:
@@ -378,11 +721,11 @@ class SITOBBDS:
         # ------ Load parameters------
         self.pu = pu
         self.custom_params = params
-        self.p = p = ParamWrapper(params,model,pu=pu)
+        self.p = p = ParamWrapper(params,model,pu=pu,seq=seq)
 
         # ------ Load model ------
         self.model = model
-        A, B, C, D = self.load_model(model)
+        A, B, C, D = self.load_model(model,seq=seq)
 
         # ------ Discretization ------
         if discretize:
@@ -410,9 +753,9 @@ class SITOBBDS:
         # print model configuration
         if not silence:
             if discretize:
-                print('',f'Model: {model}','A=',A_d,'B=',B_d,'C=',C,'D=',D,'Lambdas=',*list(self.lambd),'',f'Condition number:\t{self.condition_number}',f'A matrix unstable:\t{self.A_unstable}',sep='\n') 
+                if not self.MLE_silence: print('',f'Model: {model}','A=',A_d,'B=',B_d,'C=',C,'D=',D,'Lambdas=',*list(self.lambd),'',f'Condition number:\t{self.condition_number}',f'A matrix unstable:\t{self.A_unstable}',sep='\n') 
             else:
-                print('',f'Model: {model}','A=',A,'B=',B,'C=',C,'D=',D,'Lambdas=',*list(self.lambd),'',f'Condition number:\t{self.condition_number}',f'A matrix unstable:\t{self.A_unstable}',sep='\n') 
+                if not self.MLE_silence: print('',f'Model: {model}','A=',A,'B=',B,'C=',C,'D=',D,'Lambdas=',*list(self.lambd),'',f'Condition number:\t{self.condition_number}',f'A matrix unstable:\t{self.A_unstable}',sep='\n') 
         
         return
     
@@ -448,23 +791,28 @@ class SITOBBDS:
         # check if the system is observable
         if rank == A.shape[0]:
             print("\nThe system is observable.")
+            observable = True
         else:
-            print("\nThe system is not observable.")        
+            print("\nThe system is not observable.")   
+            observable = False
+            
         # Check if all unobservable eigenvalues have negative real parts
         if np.all(np.real(unobservable_eigvals) < 0):
             print("The system is detectable.")
+            detectable = True
         else:
             print("The system is not detectable.")
+            detectable = False
 
-        return
+        return observable, detectable
         
     def create_input(self, t1, t2, dt, amp=None, phi=None, t0:float = 0, mode:str='sin'):
 
         # if Sx is None: Sx = lambda: sx_random*((sx,1)[sx is None])*np.random.randn(m) + mu_x
         # if Sy is None: Sy = lambda: sy_random*((sy,1)[sy is None])*np.random.randn(m) + mu_y        
 
-        if mode not in ['sin','cos','-sin','-cos','step','impulse']:
-            raise ValueError("Mode must be 'sin','cos','step', or 'impulse'")
+        if mode not in ['sin','cos','-sin','-cos','step','impulse','abc']:
+            raise ValueError("Mode must be 'sin','cos','step','abc', or 'impulse'")
 
         
         # Parameter selection
@@ -484,10 +832,25 @@ class SITOBBDS:
             u = lambda t: amp*(0,1)[t>=t0]
         elif mode == 'impulse':
             u = lambda t: amp*(0,1)[t0<= t and t < t0 + dt]
+        elif mode == 'abc':
+            if len(amp) != 3 or len(phi) != 3:
+                raise ValueError("Please provide 3 amplitudes and phases as input")
+            u1 = lambda t: amp[0]*(np.sin(self.p.omega*t+phi[0])-1j*np.cos(self.p.omega*t+phi[0]))*(0,1)[t>=t0]
+            u2 = lambda t: amp[1]*(np.sin(self.p.omega*t+phi[1])-1j*np.cos(self.p.omega*t+phi[1]))*(0,1)[t>=t0]
+            u3 = lambda t: amp[2]*(np.sin(self.p.omega*t+phi[2])-1j*np.cos(self.p.omega*t+phi[2]))*(0,1)[t>=t0]
+            u = (u1,u2,u3)    
+            
         
         # Evaluate u(k) for each k
         time = np.arange(t1,t2+dt,dt)
-        uk = np.array([u(k) for k in time])
+        if mode == 'abc':  
+            uk = np.array([
+                [u1(k) for k in time],
+                [u2(k) for k in time],
+                [u3(k) for k in time],
+                ])            
+        else:
+            uk = np.array([u(k) for k in time])
 
         return u, uk
 
@@ -497,6 +860,25 @@ class SITOBBDS:
         Nk = amp*np.random.randn(dim,len(time)) + mu
         return Nk
     
+    def abc2seq(self,abc):
+        # Number of phases
+        num_phases = 3
+    
+        # Construct the transformation matrix
+        A = np.array([[1, 1, 1],
+                                          [1, np.exp(-1j * 2 * np.pi / num_phases), np.exp(-1j * 4 * np.pi / num_phases)],
+                                          [1, np.exp(-1j * 4 * np.pi / num_phases), np.exp(-1j * 8 * np.pi / num_phases)]])
+    
+        # Perform the sequence transformation
+        seq = np.zeros_like(abc,dtype=complex)
+        for i in range(abc.shape[1]):
+            seq[:,i] = inv(A) @ abc[:,i]
+    
+    
+    
+        return seq
+
+    
     #============================= Evaluate functions =============================#
     def evaluate_condition_number(self,params,n=100):
         data = {'Rin':[],
@@ -505,7 +887,7 @@ class SITOBBDS:
                 }
 
         for rin in np.linspace(0.05,100,n):
-            print('asdf')
+            if not self.MLE_silence: print('asdf')
             for rload in np.linspace(0.2,1e6,n):
                 print(rin,rload)
                 params['Rin'] = rin
@@ -565,6 +947,7 @@ class SITOBBDS:
         for k, sim in enumerate(sims):
             for i in range(sim.shape[0]):
                 idxs = ~np.isnan(sim[i]) & ~(abs(sim[i]) > 2)
+                idxs = ~np.isnan(sim[i]) & ~(abs(sim[i]) > 2e6)
                 if labels is not None:
                     ax[i].plot(t[idxs],sim[i,idxs],color=colors[k],ls=lss[k%4],label=labels[k])
                 else:
@@ -616,6 +999,23 @@ class SITOBBDS:
 
         return
     
+    def eigenvalues_analysis(self,M,P_llim=0.01,P_ulim=1e6,vmax=1):
+        
+        lamb, R = eig(M)
+        
+        L = inv(R)
+        
+        P = R @ L.T        
+        
+        fig, ax = plt.subplots(1,1,dpi=150)
+        cax = ax.imshow(np.where((abs(P)>=P_llim) & (abs(P)<=P_ulim),abs(P),np.nan), 
+                        # cmap=plt.cm.coolwarm, 
+                        vmin=0, vmax=vmax)
+        cbar = fig.colorbar(cax, extend='max')
+        
+        return P
+    
+    
     def plot_eigenvalues(self,systems,labels=None,save=None,file_extension='pdf',path=None):
         # 
         z_xy = lambda z: ([real(x) for x in z],[imag(x) for x in z])
@@ -636,7 +1036,7 @@ class SITOBBDS:
             lambd = eigvals(sys)
 
             x,y = z_xy(lambd)
-            print(x,y)
+            if not self.MLE_silence: print(x,y)
             if labels is not None:
                 ax.scatter(x,y,label=labels[i],zorder=1e3-i,alpha=0.75,marker=markers[i])
             else:
@@ -719,6 +1119,9 @@ class SITOBBDS:
 
         print('',f'Simulating discrete-time system:',sep='\n')
         t1_ = datetime.datetime.now()
+
+        if not self.MLE_silence: print(y.shape,x0.shape,C.shape,u.shape,Sx.shape,Sy.shape)
+
         # initial values
         x[:,0] = x0
         y[:,0] = C @ x0 # + Sy() # TODO: Add noise, be aware of operator for u[k]
@@ -773,10 +1176,15 @@ class SITOBBDS:
             
         time = np.arange(t1,t2+dt,dt)
 
+        if len(u.shape) == 1:
+            u = u.reshape(1,-1)
+
         # creating indices
         n_y = len(time)
         n = A.shape[0]
         m = C.shape[0]
+
+        if not self.MLE_silence: print(n,m)
 
         # Initialize arrays
         eps = np.zeros((m,n_y))
@@ -785,8 +1193,8 @@ class SITOBBDS:
         y_hat_pred   = np.zeros((m,n_y))
         P_filt       = np.zeros((n,n,n_y))
         P_pred       = np.zeros((n,n,n_y))
-        K       = np.zeros((n,n,n_y))
-        R       = np.zeros((n,n,n_y))
+        K            = np.zeros((n,n,n_y))
+        R            = np.zeros((n,n,n_y))
         
         # initial values
         x_hat_pred[:,0] = x0
@@ -810,8 +1218,7 @@ class SITOBBDS:
 
             # Time update
             if k < len(time)-1:
-                # print(A)
-                x_hat_pred[:,k+1] = A @ x_hat_filt[:,k] + B @ np.array([u[k]])
+                x_hat_pred[:,k+1] = A @ x_hat_filt[:,k] + B @ u[:,k]
                 P_pred[:, :, k+1] = A @ P_filt[:,:,k] @ A.T + R1 # TODO: R1 = B @ R1 @ B.T, B is not the input matrix in this context.
         
         return x_hat_pred, y_hat_pred, eps, R
@@ -912,8 +1319,7 @@ class SITOBBDS:
         H_s = signal.TransferFunction(h_ct, [1, 0])
         return H_s
 
-
-    def c2d(self,A,B,C,D,dt):
+    def c2d(self,A,B,C,D,dt,mode='ZOH'):
 
         if len(A.shape) == 1:
             n = int(np.sqrt(A.shape[0]))
@@ -925,6 +1331,8 @@ class SITOBBDS:
         eAt = linalg.expm(At * dt)
         Ad = eAt[:A.shape[0], :A.shape[1]]
         Bd = eAt[:A.shape[0], -B.shape[1]:]          
+
+
 
         # assign to class
         self.A_d, self.B_d = Ad, Bd
@@ -1139,7 +1547,6 @@ class SITOBBDS:
                 print(i,opt_params[i],theta[i],np.exp(theta[i]))
             print(theta)
     
-
         return J
 
 
@@ -1161,7 +1568,7 @@ class SITOBBDS:
     
             # Get continous system
             A, B, C, D = self.load_model(p = p)
-            
+           
             # Discretize continous system
             Ad, Bd, C, D = self.c2d(A,B,C,D,dt)
     
@@ -1171,6 +1578,56 @@ class SITOBBDS:
             data['J'].append(J)
                 
         return pd.DataFrame(data)
+
+    def ML_sensitivity(self,opt_params,n, A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt,delta=0.5,silence=True):
+        self.opt_params = opt_params
+        self.MLE_silence = silence
+        from itertools import product
+        def cartesian_product(*sequences,column_names=None):
+            # Generate the Cartesian product of the sequences
+            cart_product = list(product(*sequences))
+        
+            # Create a DataFrame from the Cartesian product
+            df = pd.DataFrame(cart_product)
+        
+            # Create column names
+            if column_names is None:
+                column_names = [f'Sequence_{i+1}' for i in range(len(sequences))]
+            df.columns = column_names
+        
+            return df
+
+        data = {'J':[]}
+        iter_list = []
+        for i, param_name in enumerate(opt_params):   
+            data[param_name] = []
+            iter_list.append(np.linspace(delta*getattr(self.p,param_name),(1+delta)*getattr(self.p,param_name),n + (0,1)[n%2 == 0]))
+
+        # 
+        df = cartesian_product(*iter_list,column_names=opt_params)
+    
+        for i, row in tqdm(df.iterrows(),total=df.shape[0]):
+            # print(row)
+            # Perturb parameters
+            p = copy.deepcopy(self.p)
+            for i, param_name in enumerate(opt_params):   
+                val = getattr(p,param_name)
+                setattr(p,param_name,row[param_name])
+                data[param_name].append(row[param_name])
+
+            # Get continous system
+            A, B, C, D = self.load_model(p = p)
+           
+            # Discretize continous system
+            Ad, Bd, C, D = self.c2d(A,B,C,D,dt)
+                    
+            # Evaluating cost function
+            J = self.ML(Ad,Bd,C,D,x0, u, y, R0, R1, R2, t1, t2, dt)
+            data['J'].append(J)
+
+                
+        return pd.DataFrame(data)
+
     
     def ML(self,Ad,Bd,C,D,x0, u, y, R0, R1, R2, t1, t2, dt):        
 
@@ -1192,13 +1649,14 @@ class SITOBBDS:
         # Defining constraints (only reasonable for not optimization without log)
         N = len(opt_params)
         self.vals = vals = np.array([self.p.params[k] for k in opt_params])
-        if log:
-            constraints = (LinearConstraint(np.eye(N), lb=np.log(vals*self.opts.cnstr_lb_factor), ub=np.log(vals*self.opts.cnstr_ub_factor), keep_feasible=False))
-        else:
-            constraints = (LinearConstraint(np.eye(N), lb=vals*self.opts.cnstr_lb_factor, ub=vals*self.opts.cnstr_ub_factor, keep_feasible=False))
+        # if log:
+        #     constraints = (LinearConstraint(np.eye(N), lb=np.log(vals*self.opts.cnstr_lb_factor), ub=np.log(vals*self.opts.cnstr_ub_factor), keep_feasible=False))
+        # else:
+        #     constraints = (LinearConstraint(np.eye(N), lb=vals*self.opts.cnstr_lb_factor, ub=vals*self.opts.cnstr_ub_factor, keep_feasible=False))
 
-        print(thetahat0)
-        
+        if not self.MLE_silence: print(thetahat0)
+
+
         # Minimization
         thetahat = minimize(self.ML_Wrapper,
                             args=(opt_params,A,B,C,D,x0, u, y, R0, R1, R2, t_start, t_end, dt, log),
@@ -1206,7 +1664,7 @@ class SITOBBDS:
                             method=self.opts.method,
                             # jac = '3-point',
                             jac = self.opts.jac,
-                            constraints=(None,constraints)[self.opts.method == 'SLSQP'],
+                            # constraints=(None,constraints)[self.opts.method == 'SLSQP'],
                             hess = self.opts.hess,
                             hessp = self.opts.hessp,
                             # options={'disp':True,'gtol': 1e-12,'return_all':True,'bounds':(-0.5,0.5),'eps':1e-4},
@@ -1216,30 +1674,28 @@ class SITOBBDS:
                                      },
                             tol=self.opts.err_tol
                             )
+        
         if log:
             thetahat.x = np.exp(thetahat.x)
         # print(thetahat,'\n')
 
         return thetahat, thetahat0
 
-
-    def ML_opt_param(self,opt_params,A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt, thetahat0=None, log:bool=True):
+    def ML_opt_param(self,opt_params,A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt, thetahat0=None, log:bool=True,silence=False):
+        self.MLE_silence = silence
         self.opt_params = opt_params
-        vals = np.array([self.p.params[k] for k in opt_params])
+        vals = np.array([self.p.params[k]*(self.p.Zbase,1)[k in ['SCR','XR']] for k in opt_params])
 
         # ------ Initializing ------
         # Selecting initial value
         if thetahat0 is None:
-            thetahat0 = [self.p.params[k] for k in opt_params]
-        # else:
-        #     thetahat0 = [(self.p.params[k],1e-10)[thetahat0==0] for k in opt_params]
-        
+            thetahat0 = [self.p.params[k] for k in opt_params]       
         ests = np.zeros(len(opt_params))
         devs = np.zeros(len(opt_params))
         thetahat0s = np.zeros(len(opt_params))
 
         # ------ Optimize ------
-        print('',f'Starting maximum likelihood estimation of all parameters:',sep='\n')
+        if not self.MLE_silence: print('',f'Starting maximum likelihood estimation of all parameters:',sep='\n')
         t1_ = datetime.datetime.now()
         thetahat, thetahat0_ = self.ML_opt(opt_params,A,B,C,D,x0, u, y, R0, R1, R2, t1, t2, dt,thetahat0,log=log)
         t2_ = datetime.datetime.now()            
@@ -1247,8 +1703,8 @@ class SITOBBDS:
         # ------ Evaluate ------
         if self.opts.disp: print('\n',thetahat)
 
-        ests = thetahat.x
-        devs = thetahat.x - vals
+        ests = thetahat.x*np.array([(self.p.Zbase,1)[k in ['SCR','XR']] for k in opt_params])
+        devs = ests - vals
         thetahat0s = thetahat0_
 
         # return resulting A matrix
@@ -1259,7 +1715,6 @@ class SITOBBDS:
         p_hat = ParamWrapper(p_hat,self.model)
 
         A_hat, _,_,_ = self.load_model(model=self.model,p=p_hat)
-
         
         opt_data = {'System':vals,
                             # 'Lower bound':vals*self.opts.cnstr_lb_factor,
@@ -1271,12 +1726,16 @@ class SITOBBDS:
         res = pd.DataFrame(opt_data,index=opt_params)
 
         # ------ Print statements ------
-        print(f'Finished in: {(t2_-t1_).total_seconds()} s')
-        print(f'#========= FINAL ESTIMATION SUMMARY =========#')
-        print(res)
-        print('2-norm:\n',np.linalg.norm(devs))
-        print('Eigenvalues:\n',eigvals(A_hat))
-        print('')
+        if not self.MLE_silence: 
+            print(f'Finished in: {(t2_-t1_).total_seconds()} s')
+            print(f'#========= FINAL ESTIMATION SUMMARY =========#')
+            print(res)
+            print('2-norm:\n',np.linalg.norm(devs))
+            try:
+                print('Eigenvalues:\n',eigvals(A_hat))
+            except Exception as e:
+                pass            
+            print('')
             
         return ests, thetahat, res, A_hat
 

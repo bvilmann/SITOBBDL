@@ -124,7 +124,7 @@ def yp(g,c,f):
         
 zs = lambda r,l,f: r + 1j*2*np.pi*f*l
 yp = lambda g,c,f: g + 1j*2*np.pi*f*c
-z0 = lambda z,y: np.sqrt(z/y)
+zc = lambda z,y: np.sqrt(z/y)
 gamma = lambda z, y: np.sqrt(z*y)
 
 # Getting values
@@ -145,7 +145,7 @@ r, l = 0.689202756E-04,0.677844477E-03/(2*np.pi*fnom)
 g, c = 0.000000000E+00,0.631300096E-07/(2*np.pi*fnom)
 
 # # LONG-LINE CORRECTED SERIES IMPEDANCE MATRIX [ohms]: 
-# d = 90 # distance [m]
+# d = 1 # distance [m]
 # r,x = np.array([0.550451976E+01,0.575768561E+02])
 # l = x / (2*np.pi * f)
 # # LONG-LINE CORRECTED SHUNT ADMITTANCE MATRIX [mhos]: 
@@ -156,22 +156,44 @@ g, c = 0.000000000E+00,0.631300096E-07/(2*np.pi*fnom)
 # l = x / (2*np.pi*fnom)
 # c = b / (2*np.pi*fnom)
 
+para = lambda r1,r2: (r1*r2)/(r1+r2)
+
 # Get impedance as a function of frequency
-rs = 0.550451976E+01
-rp = 1/0.179068548E-04
+rload = 100
+rload = 200
+rs = 0.550451976E+01 
+gp = 0.179068548E-04 / 2 
+rp = 1/gp
+
+y_p = gp + (2*np.pi*f) * c * d 
+z_p = 1/y_p
+z_s = rs + (2*np.pi*f) * l * d 
+
+z_eq = para(para(rload,rp) + rs,rp)
+
+
+
+# z_eq = para(para(rload,rp) + rs,rp)
+
+# z_eq = para(para(rload,z_p) + z_s ,z_p)
+
 z = zs(r,l,f)
 y = yp(g,c,f)
+# zc = z0
 zn = zs(r,l,fnom)
 yn = zs(g,c,fnom)
 z0 = np.sqrt(zn/yn)
 
 # calculate 
-Vs, Is = 1*m.p.Vbase,(m.p.Zbase/(200+abs(rs)))*m.p.Ibase
+Vs, Is = m.p.Vbase/np.sqrt(2),(m.p.Zbase/(z_eq))*m.p.Ibase
 # Vs, Is = 1*m.p.Vbase,.3*m.p.Ibase
 Vr = Vs*np.cosh(d*gamma(z,y)) - z0*Is*np.sinh(d*gamma(z,y))
 Ir = Is*np.cosh(d*gamma(z,y)) - 1/z0*Vs*np.sinh(d*gamma(z,y))
 Z = Vr/Ir
 Y = Z**(-1)
+
+# Z = zc(z,y)*np.sinh(ell*gamma(z,y))
+# Y = 1/zc(z,y)*np.tanh(ell*gamma(z,y)/(1j*2*np.pi*f))
     
 
 # # LONG-LINE CORRECTED SERIES IMPEDANCE MATRIX [ohms]: 
@@ -209,12 +231,12 @@ f_fdcm = np.genfromtxt(r'C:\Users\bvilm\PycharmProjects\SITOBB\data\freq\Harm_1c
 fig, ax = plt.subplots(2,1,dpi=200,sharex=True)
 # Plot magnitudes
 
-axin1 = ax[0].inset_axes([0.3625, 0.55, 0.15, 0.4])
+axin1 = ax[0].inset_axes([0.3, 0.55, 0.15, 0.4])
 
 for ax_ in [axin1,ax[0]]:    
-    ax_.plot(f,abs(Z),label=f'Calculated from FDCM',zorder=3)
+    ax_.plot(f,abs(Z),label=f'Calculated from FDCM data',zorder=3)
     # ax_.plot(f,abs(Z1),label=f'Calculated from FDCM',zorder=3)
-    ax_.plot(f_pi[:,0],f_pi[:,1],label=f'Frequency resp. $\\pi$-equivalent',zorder=3)
+    ax_.plot(f_pi[:,0],f_pi[:,1],label=f'Frequency resp. nom. $\\pi$-equivalent',zorder=3)
     ax_.plot(f_fdcm[:,0],f_fdcm[:,1],label=f'Frequency resp. (FDCM)',zorder=3,ls='--')
     ax_.axvline(50,color='k',lw=0.75)
 
@@ -225,14 +247,14 @@ axin1.set_xlim(x1,x2)
 axin1.set_ylim(y1,y2)
 axin1.grid()
 
-ax[0].plot([x1,x2,x2,x1,x1],[y1,y1,y2,y2,y1],color='grey',lw=0.75,ls='-')
+ax[0].plot([x1,x2,x2,x1,x1],[y1,y1,y2,y2,y1],color='red',lw=0.75,ls='-',zorder=10)
 
 ax[0].annotate('', xy=(55, 140),
              xycoords='data',
-             xytext=(600, 280),
+             xytext=(700, 190),
              textcoords='data',
              arrowprops=dict(arrowstyle= '->',
-                             color='grey',
+                             color='red',
                              alpha=0.75,
                              # lw=3.5,
                              ls='-')
@@ -249,7 +271,7 @@ for i in range(2):
     ax[i].grid()
     ax[i].set_xlim(0,2e3)
 ax[0].legend(fontsize=8,loc='upper right')
-ax[0].set_ylim((0,max(abs(Z))*1.1))
+ax[0].set_ylim((0,275))
 ax[1].set_ylim((-90,90))
 ax[1].set_yticks(np.arange(-90,90+30,30))
 
@@ -257,7 +279,7 @@ ax[0].set_ylabel('Magnitude [$\\Omega$]')
 ax[1].set_ylabel('Phase [deg]')
 ax[1].set_xlabel('$f$ [Hz]')
 
-plt.rcParams['text.usetex'] = True
+plt.rcParams['text.usetex'] = False
 # plt.savefig(f'{plot_path}\\frequency_response_comp.pdf')
 #%%
 

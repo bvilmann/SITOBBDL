@@ -145,7 +145,6 @@ class PS:
                 # print(n,k,self.G.nodes[n][k])
                 Y[i, i] += 1/self.G.nodes[n][k]
 
-
         # Create state space
         # ss_mode = 'z'
         # ss = ctrl.ss(Y,B,np.diag(np.ones(N)),0)

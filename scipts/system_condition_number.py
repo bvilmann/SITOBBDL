@@ -118,9 +118,11 @@ pcm = axin.pcolormesh(X,Y,Cn2.T,
               # cmap='PuBu_r', 
               shading='auto')
 
+ax.scatter([0.5],[200],color='red',marker='x')
+axin.scatter([0.5],[200],color='red',marker='x')
 
 axin = update_spine_and_ticks(axin,color='white',tick_params=dict(colors='white'))
-
+fig.tight_layout()
 plt.savefig(f'{path}\\Condition_number.pdf')
 
 

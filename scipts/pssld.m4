@@ -1,0 +1,1 @@
+divert(-1)ifdef(`libsld_',,r`include(C:\Users\bvilm\texmf\tex\latex\circuit_macros\SLDdrawer\libsld.m4)divert(-1)')dnldivert(0)dnl
